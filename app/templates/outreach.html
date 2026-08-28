@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Outreach — Inbox Job Agent{% endblock %}
+{% block content %}
+<form class="filters" method="get" action="/outreach">
+  <select name="who">
+    <option value="people" {% if who == 'people' %}selected{% endif %}>from a person</option>
+    <option value="all" {% if who == 'all' %}selected{% endif %}>include automated mail</option>
+  </select>
+  <select name="show">
+    <option value="open" {% if show == 'open' %}selected{% endif %}>open only</option>
+    <option value="all" {% if show == 'all' %}selected{% endif %}>everything</option>
+  </select>
+  <select name="days">
+    {% for option in [7, 30, 60, 180] %}
+    <option value="{{ option }}" {% if days == option %}selected{% endif %}>{{ option }}d</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+</form>
+
+{% if not items %}
+  <p class="empty">
+    Nothing here. Anything a human sends you — recruiter pitches, interview scheduling,
+    assessments, offers — lands on this page.
+  </p>
+{% endif %}
+
+{% for item in items %}
+<div class="card u-{{ item.urgency }}">
+  <div class="row">
+    <div>
+      <h3>{{ item.subject or "(no subject)" }}</h3>
+      <div class="meta">
+        <span class="chip">{{ item.kind.replace("_", " ") }}</span>
+        <span>{{ item.person or item.person_email }}</span>
+        {% if item.company %}<span>· {{ item.company }}</span>{% endif %}
+        {% if item.role %}<span>· {{ item.role }}</span>{% endif %}
+        <span>· {{ item.received_at.strftime("%b %d, %H:%M") }}</span>
+      </div>
+      {% if item.summary %}<p style="margin:8px 0 0">{{ item.summary }}</p>{% endif %}
+      {% if item.action_required %}
+      <p style="margin:6px 0 0; color: var(--warn)"><b>Action:</b> {{ item.action_required }}</p>
+      {% endif %}
+    </div>
+    <div style="text-align:right">
+      <a href="{{ item.gmail_link }}" target="_blank" rel="noopener">open mail</a>
+    </div>
+  </div>
+  <div class="actions">
+    <form method="post" action="/outreach/{{ item.id }}/handled">
+      <input type="hidden" name="redirect" value="/outreach?show={{ show }}&days={{ days }}&who={{ who }}">
+      <button type="submit">{{ "reopen" if item.handled else "mark handled" }}</button>
+    </form>
+    {% if item.notified %}<span class="chip">notified</span>{% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

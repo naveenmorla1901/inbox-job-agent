@@ -1,0 +1,88 @@
+# Copy to config/profile.yaml and edit. This drives every matching decision.
+name: Your Name
+
+# Roles you actively want. Used for the title component of the score.
+target_titles:
+  - data scientist
+  - machine learning engineer
+  - ml engineer
+  - ai engineer
+  - nlp engineer
+  - llm engineer
+  - data analyst
+
+# Softer signals: any of these tokens in a title earns partial title credit.
+title_keywords:
+  - data
+  - machine learning
+  - ml
+  - ai
+  - nlp
+  - llm
+  - analytics
+  - scientist
+
+# Hard rejects on the title.
+exclude_titles:
+  - sales
+  - account executive
+  - recruiter
+  - nurse
+  - driver
+  - technician
+  - teacher
+
+# Hard rejects anywhere in the description.
+exclude_keywords:
+  - security clearance
+  - ts/sci
+  - polygraph
+  - us citizen only
+  - no sponsorship
+  - will not sponsor
+  - unpaid
+  - commission only
+
+# weight = how much this skill matters to you (1 = nice to have, 3 = core).
+skills:
+  - {name: python, weight: 3, aliases: [py]}
+  - {name: sql, weight: 3, aliases: [postgresql, mysql, bigquery]}
+  - {name: machine learning, weight: 3, aliases: [ml, scikit-learn, sklearn, xgboost]}
+  - {name: deep learning, weight: 2, aliases: [pytorch, tensorflow, keras, neural network]}
+  - {name: nlp, weight: 3, aliases: [natural language processing, spacy, transformers, bert]}
+  - {name: llm, weight: 3, aliases: [large language model, rag, langchain, prompt engineering]}
+  - {name: statistics, weight: 2, aliases: [a/b testing, hypothesis testing, regression]}
+  - {name: pandas, weight: 2, aliases: [numpy, polars]}
+  - {name: data visualization, weight: 2, aliases: [tableau, power bi, matplotlib, looker]}
+  - {name: aws, weight: 2, aliases: [sagemaker, s3, lambda, ec2]}
+  - {name: docker, weight: 2, aliases: [kubernetes, k8s, mlops, ci/cd]}
+  - {name: fastapi, weight: 2, aliases: [flask, django, rest api]}
+
+preferred_locations:
+  - your city, st
+  - remote
+  - united states
+remote_ok: true
+
+# Postings demanding much more than this get a seniority penalty.
+max_years_experience: 5
+
+# Senders whose mail is treated as a job alert digest without asking the LLM.
+job_alert_senders:
+  - jobalerts-noreply@linkedin.com
+  - jobs-listings@linkedin.com
+  - alert@indeed.com
+  - invitetoapply@indeed.com
+  - noreply@glassdoor.com
+  - jobalerts@ziprecruiter.com
+  - alerts@dice.com
+  - notifications@handshake.com
+
+# Paste your resume as plain text. Used as a bag-of-words relevance signal.
+resume_text: |
+  Paste your resume here as plain text. Include job titles, employers, dates,
+  the tools and libraries you actually used, and a skills list. The matcher
+  treats this as a bag of words, so more concrete detail means better scoring.
+
+  Mention work authorisation and location preferences too - postings that
+  contradict them get penalised.

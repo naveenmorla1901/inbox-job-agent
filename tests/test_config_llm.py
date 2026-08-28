@@ -1,0 +1,57 @@
+import pytest
+
+from app import config
+from app.llm import LLM
+
+
+@pytest.fixture()
+def fresh_config():
+    config.get_settings.cache_clear()
+    config.get_profile.cache_clear()
+    yield
+    config.get_settings.cache_clear()
+    config.get_profile.cache_clear()
+
+
+def test_profile_can_come_from_an_env_var(monkeypatch, fresh_config):
+    monkeypatch.setenv(
+        "PROFILE_YAML",
+        "name: Hosted User\ntarget_titles: [ai engineer]\nresume_text: python and llm work\n",
+    )
+    profile = config.get_profile()
+    assert profile.name == "Hosted User"
+    assert profile.target_titles == ["ai engineer"]
+
+
+def test_gemini_needs_a_key_to_be_considered_enabled(monkeypatch, fresh_config):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    assert not LLM(config.get_settings()).enabled
+
+    config.get_settings.cache_clear()
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    assert LLM(config.get_settings()).enabled
+
+
+def test_json_helper_survives_markdown_fences(monkeypatch, fresh_config):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    llm = LLM(config.get_settings())
+    monkeypatch.setattr(
+        LLM, "complete", lambda *_, **__: '```json\n{"category": "offer", "confidence": 0.9}\n```'
+    )
+    assert llm.json("prompt") == {"category": "offer", "confidence": 0.9}
+
+
+def test_json_helper_returns_empty_dict_on_garbage(monkeypatch, fresh_config):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    llm = LLM(config.get_settings())
+    monkeypatch.setattr(LLM, "complete", lambda *_, **__: "sorry, I cannot help with that")
+    assert llm.json("prompt") == {}
+
+
+def test_disabled_provider_never_calls_out(monkeypatch, fresh_config):
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+    llm = LLM(config.get_settings())
+    assert llm.complete("anything") == ""

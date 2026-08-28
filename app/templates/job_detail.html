@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} — Inbox Job Agent{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="row">
+    <div>
+      <h3><a href="{{ job.url }}" target="_blank" rel="noopener">{{ job.title or "Untitled role" }}</a></h3>
+      <div class="meta">
+        <span>{{ job.company }}</span>
+        {% if job.location %}<span>· {{ job.location }}</span>{% endif %}
+        <span>· {{ job.source }}</span>
+        <span>· {{ job.received_at.strftime("%b %d, %Y") }}</span>
+        <span>· status: {{ job.status }}</span>
+      </div>
+    </div>
+    <div class="score {% if job.score >= 0.7 %}s-hi{% elif job.score >= 0.55 %}s-mid{% else %}s-lo{% endif %}">
+      {{ "%.2f"|format(job.score) }}
+    </div>
+  </div>
+  <div class="chips">
+    <span class="chip">title {{ "%.2f"|format(job.title_score) }}</span>
+    <span class="chip">skills {{ "%.2f"|format(job.skill_score) }}</span>
+    <span class="chip">resume {{ "%.2f"|format(job.resume_score) }}</span>
+  </div>
+  <div class="actions">
+    {% for action in ["saved", "applied", "ignored", "new"] if action != job.status %}
+    <form method="post" action="/job/{{ job.id }}/status">
+      <input type="hidden" name="status" value="{{ action }}">
+      <input type="hidden" name="redirect" value="/job/{{ job.id }}">
+      <button type="submit">{{ action }}</button>
+    </form>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h3>Matched skills</h3>
+  <div class="chips">
+    {% for skill in (job.matched_skills or "").split(", ") if skill %}
+    <span class="chip on">{{ skill }}</span>{% endfor %}
+  </div>
+  <h3 style="margin-top:14px">Not mentioned</h3>
+  <div class="chips">
+    {% for skill in (job.missing_skills or "").split(", ") if skill %}
+    <span class="chip">{{ skill }}</span>{% endfor %}
+  </div>
+</div>
+
+{% if message %}
+<div class="card">
+  <h3>Came from</h3>
+  <div class="meta">
+    <span>{{ message.sender }} &lt;{{ message.sender_email }}&gt;</span>
+    <span>· {{ message.subject }}</span>
+    <span>· {{ message.jobs_matched }}/{{ message.jobs_found }} matched</span>
+  </div>
+  <div class="actions">
+    <a href="https://mail.google.com/mail/u/0/#inbox/{{ message.id }}" target="_blank" rel="noopener">open mail</a>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Description</h3>
+  <pre>{{ job.description or "(not scraped — open the link)" }}</pre>
+</div>
+{% endblock %}

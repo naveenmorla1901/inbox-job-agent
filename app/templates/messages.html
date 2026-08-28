@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Mail log — Inbox Job Agent{% endblock %}
+{% block content %}
+<table>
+  <tr>
+    <th>Received</th><th>From</th><th>Subject</th><th>Category</th><th>Conf</th><th>Jobs</th>
+  </tr>
+  {% for message in messages %}
+  <tr>
+    <td>{{ message.received_at.strftime("%b %d %H:%M") }}</td>
+    <td title="{{ message.sender_email }}">{{ message.sender[:28] }}</td>
+    <td>
+      <a href="https://mail.google.com/mail/u/0/#inbox/{{ message.id }}" target="_blank" rel="noopener">
+        {{ message.subject[:70] or "(no subject)" }}</a>
+    </td>
+    <td><span class="chip">{{ message.category.replace("_", " ") }}</span></td>
+    <td>{{ "%.2f"|format(message.confidence) }}</td>
+    <td>{{ message.jobs_matched }}/{{ message.jobs_found }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% if not messages %}<p class="empty">No mail processed yet.</p>{% endif %}
+{% endblock %}

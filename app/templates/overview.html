@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Overview — Inbox Job Agent{% endblock %}
+{% block content %}
+<form class="filters" method="get" action="/overview">
+  <select name="days">
+    {% for option in [1, 3, 7, 30, 90] %}
+    <option value="{{ option }}" {% if days == option %}selected{% endif %}>
+      last {{ option }} day{{ "s" if option > 1 else "" }}
+    </option>
+    {% endfor %}
+  </select>
+  <button type="submit">Refresh</button>
+</form>
+
+<div class="card">
+  <h3>{{ report.messages }} email{{ "s" if report.messages != 1 else "" }} processed</h3>
+  <table>
+    <tr><th>Category</th><th style="width:90px">Count</th></tr>
+    {% for key, label, count in report.categories %}
+    <tr>
+      <td>{{ label }}</td>
+      <td><b>{{ count }}</b></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h3>Job postings</h3>
+  <div class="chips">
+    <span class="chip">{{ report.jobs_found }} links found in alerts</span>
+    <span class="chip">{{ report.jobs_stored }} postings saved</span>
+    <span class="chip on">{{ report.jobs_matched }} match your profile</span>
+    <span class="chip">{{ report.jobs_duplicates }} repeats collapsed</span>
+    <span class="chip">{{ report.outreach_open }} follow-ups open</span>
+  </div>
+  <h3 style="margin-top:14px">Where they came from</h3>
+  <div class="chips">
+    {% for source, count in report.sources %}<span class="chip">{{ source }}: {{ count }}</span>{% endfor %}
+  </div>
+  <h3 style="margin-top:14px">Link fetch results</h3>
+  <div class="chips">
+    {% for status, count in report.scrape_status %}
+    <span class="chip {% if status == 'ok' %}on{% endif %}">{{ status }}: {{ count }}</span>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h3>Applications ({{ report.applications_open }} in progress)</h3>
+  <div class="chips">
+    {% for status, count in report.applications %}
+    <span class="chip {% if status in ('interview', 'offer') %}on{% endif %}">
+      {{ status.replace("_", " ") }}: {{ count }}
+    </span>
+    {% else %}
+    <span class="chip">nothing tracked yet</span>
+    {% endfor %}
+  </div>
+  <div class="meta" style="margin-top:8px"><a href="/applications">open the tracker</a></div>
+</div>
+
+{% if report.top_jobs %}
+<div class="card">
+  <h3>Best matches in this window</h3>
+  <table>
+    <tr><th style="width:60px">Score</th><th>Role</th><th>Company</th><th>Source</th></tr>
+    {% for job in report.top_jobs %}
+    <tr>
+      <td><b>{{ "%.2f"|format(job.score) }}</b></td>
+      <td><a href="/job/{{ job.id }}">{{ job.title[:60] or "Untitled" }}</a></td>
+      <td>{{ job.company[:30] }}</td>
+      <td>{{ job.source }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

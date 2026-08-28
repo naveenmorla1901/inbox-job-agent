@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Login — Inbox Job Agent{% endblock %}
+{% block content %}
+<div class="card" style="max-width:380px;margin:60px auto">
+  <h3>Enter access key</h3>
+  <p class="meta">The value of <code>API_TOKEN</code> from your environment.</p>
+  <form method="post" action="/login" style="display:flex;gap:8px;margin-top:12px">
+    <input type="password" name="key" placeholder="access key" autofocus style="flex:1">
+    <button type="submit">Open</button>
+  </form>
+</div>
+{% endblock %}

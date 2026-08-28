@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Inbox Job Agent{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #171a21; --panel-2: #1d212a; --line: #262b36;
+      --text: #e6e9ef; --muted: #9aa4b2; --accent: #6ea8fe; --good: #3fb950;
+      --warn: #d29922; --bad: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.5 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header { position: sticky; top: 0; z-index: 5; background: var(--panel);
+      border-bottom: 1px solid var(--line); padding: 12px 20px;
+      display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+    header h1 { font-size: 16px; margin: 0; letter-spacing: .3px; }
+    nav { display: flex; gap: 16px; }
+    nav a { color: var(--muted); font-size: 14px; }
+    nav a.active { color: var(--text); font-weight: 600; }
+    .badge { background: var(--bad); color: #fff; border-radius: 10px;
+      padding: 0 7px; font-size: 12px; margin-left: 6px; }
+    main { max-width: 1080px; margin: 0 auto; padding: 24px 20px 80px; }
+    .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+    input, select, button, textarea { background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 14px; }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      padding: 14px 16px; margin-bottom: 12px; }
+    .card h3 { margin: 0 0 4px; font-size: 16px; }
+    .meta { color: var(--muted); font-size: 13px; display: flex; gap: 10px; flex-wrap: wrap; }
+    .row { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+    .score { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 18px; }
+    .s-hi { color: var(--good); } .s-mid { color: var(--warn); } .s-lo { color: var(--muted); }
+    .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
+      padding: 2px 9px; font-size: 12px; color: var(--muted); }
+    .chip.on { color: var(--good); border-color: #24422b; }
+    .actions { display: flex; gap: 6px; margin-top: 10px; }
+    .actions form { display: inline; }
+    .empty { color: var(--muted); text-align: center; padding: 60px 0; }
+    pre { white-space: pre-wrap; word-wrap: break-word; background: var(--panel-2);
+      border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 500; }
+    .u-high { border-left: 3px solid var(--bad); }
+    .u-normal { border-left: 3px solid var(--line); }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Inbox Job Agent</h1>
+  <nav>
+    <a href="/overview" class="{% if request.url.path == '/overview' %}active{% endif %}">Overview</a>
+    <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Jobs</a>
+    <a href="/outreach" class="{% if request.url.path.startswith('/outreach') %}active{% endif %}">
+      Follow-ups{% if pending_outreach %}<span class="badge">{{ pending_outreach }}</span>{% endif %}
+    </a>
+    <a href="/applications" class="{% if request.url.path.startswith('/application') %}active{% endif %}">
+      Applications
+    </a>
+    <a href="/messages" class="{% if request.url.path == '/messages' %}active{% endif %}">Mail log</a>
+    <a href="/api/docs">API</a>
+  </nav>
+</header>
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

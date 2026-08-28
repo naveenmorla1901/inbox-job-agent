@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Jobs — Inbox Job Agent{% endblock %}
+{% block content %}
+<form class="filters" method="get" action="/">
+  <input type="search" name="q" value="{{ q }}" placeholder="title, company, keyword">
+  <select name="status">
+    {% for option in ["new", "saved", "applied", "ignored", "all"] %}
+    <option value="{{ option }}" {% if status == option %}selected{% endif %}>{{ option }}</option>
+    {% endfor %}
+  </select>
+  <select name="show">
+    <option value="matched" {% if show == 'matched' %}selected{% endif %}>matches only</option>
+    <option value="all" {% if show == 'all' %}selected{% endif %}>every posting received</option>
+  </select>
+  <select name="duplicates">
+    <option value="hide" {% if duplicates == 'hide' %}selected{% endif %}>
+      hide repeats{% if duplicate_count %} ({{ duplicate_count }}){% endif %}
+    </option>
+    <option value="show" {% if duplicates == 'show' %}selected{% endif %}>show repeats</option>
+  </select>
+  <select name="sort">
+    <option value="score" {% if sort == 'score' %}selected{% endif %}>best match</option>
+    <option value="date" {% if sort == 'date' %}selected{% endif %}>newest</option>
+  </select>
+  <select name="days">
+    {% for option in [7, 14, 30, 90, 365] %}
+    <option value="{{ option }}" {% if days == option %}selected{% endif %}>{{ option }}d</option>
+    {% endfor %}
+  </select>
+  <input type="number" name="min_score" step="0.05" min="0" max="1" value="{{ min_score }}" style="width:90px">
+  <button type="submit">Filter</button>
+</form>
+
+{% if not jobs %}
+  <p class="empty">No jobs yet. Run a poll: <code>python -m app.run poll</code></p>
+{% endif %}
+
+{% for job in jobs %}
+<div class="card">
+  <div class="row">
+    <div>
+      <h3><a href="{{ job.url }}" target="_blank" rel="noopener">{{ job.title or "Untitled role" }}</a></h3>
+      <div class="meta">
+        <span>{{ job.company or job.source }}</span>
+        {% if job.location %}<span>· {{ job.location }}</span>{% endif %}
+        <span>· {{ job.source }}</span>
+        <span>· {{ job.received_at.strftime("%b %d") }}</span>
+        <span>· link: {{ job.scrape_status or "?" }}{% if job.extraction %} via {{ job.extraction }}{% endif %}</span>
+        {% if not job.matched %}<span>· below threshold</span>{% endif %}
+        {% if job.duplicate_of %}<span>· repeat of #{{ job.duplicate_of }}</span>{% endif %}
+      </div>
+      <div class="chips">
+        {% for skill in (job.matched_skills or "").split(", ") if skill %}
+        <span class="chip on">{{ skill }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div class="score {% if job.score >= 0.7 %}s-hi{% elif job.score >= 0.55 %}s-mid{% else %}s-lo{% endif %}">
+        {{ "%.2f"|format(job.score) }}
+      </div>
+      <div class="meta"><a href="/job/{{ job.id }}">details</a></div>
+    </div>
+  </div>
+  <div class="actions">
+    {% for action in ["saved", "applied", "ignored", "new"] if action != job.status %}
+    <form method="post" action="/job/{{ job.id }}/status">
+      <input type="hidden" name="status" value="{{ action }}">
+      <input type="hidden" name="redirect" value="{{ request.url.path }}?{{ request.url.query }}">
+      <button type="submit">{{ action }}</button>
+    </form>
+    {% endfor %}
+    <span class="chip">status: {{ job.status }}</span>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}
