@@ -85,6 +85,11 @@ PROVIDERS: dict[str, Provider] = {
     ),
 }
 
+# Cheap/fast first for high-volume triage; stronger models first for rare long extracts.
+CLASSIFY_ORDER = ("groq", "gemini", "nvidia", "deepseek", "openrouter")
+EXTRACT_ORDER = ("nvidia", "deepseek", "gemini", "groq", "openrouter")
+TASK_ORDER = {CLASSIFY: CLASSIFY_ORDER, EXTRACT: EXTRACT_ORDER}
+
 # provider name -> unix time it may be tried again
 _cooldowns: dict[str, float] = {}
 
@@ -123,23 +128,48 @@ class LLM:
 
     def key_for(self, provider: Provider) -> str:
         if provider.style == "ollama":
-            return "local"
+            # Only try a local server when it was asked for — otherwise every poll
+            # would hang on localhost:11434.
+            if (self.settings.llm_provider or "").lower() == "ollama":
+                return "local"
+            return ""
         return str(getattr(self.settings, provider.key_field, "") or "")
+
+    def _model_for(self, provider: Provider) -> str:
+        return {
+            "gemini": self.settings.gemini_model,
+            "groq": self.settings.groq_model,
+            "ollama": self.settings.ollama_model,
+        }.get(provider.name, provider.default_model) or provider.default_model
 
     def chain(self, task: str = CLASSIFY) -> list[tuple[Provider, str]]:
         settings = self.settings
-        spec = getattr(settings, f"llm_chain_{task}", "") or settings.llm_chain
-        if not spec.strip():
-            # Legacy single-provider config still works.
-            provider = (settings.llm_provider or "none").lower()
-            if provider in PROVIDERS:
-                model = {
-                    "gemini": settings.gemini_model,
-                    "groq": settings.groq_model,
-                    "ollama": settings.ollama_model,
-                }.get(provider, "")
-                spec = f"{provider}:{model}" if model else provider
-        return [(p, m) for p, m in parse_chain(spec) if self.key_for(p)]
+        spec = (getattr(settings, f"llm_chain_{task}", "") or settings.llm_chain).strip()
+        if spec:
+            return [(p, m) for p, m in parse_chain(spec) if self.key_for(p)]
+
+        # LLM_PROVIDER=none means rules only, even if keys sit in .env.
+        if (settings.llm_provider or "none").lower() == "none":
+            return []
+
+        # Any other provider value turns LLMs on and walks every key you have,
+        # cheapest-first for classify and strongest-first for extract.
+        names = list(TASK_ORDER.get(task, CLASSIFY_ORDER))
+        if (settings.llm_provider or "").lower() == "ollama":
+            names.append("ollama")
+        out: list[tuple[Provider, str]] = []
+        seen: set[str] = set()
+        for name in names:
+            provider = PROVIDERS.get(name)
+            if not provider or name in seen or not self.key_for(provider):
+                continue
+            out.append((provider, self._model_for(provider)))
+            seen.add(name)
+        return out
+
+    def describe(self, task: str = CLASSIFY) -> str:
+        parts = [f"{p.name}:{model}" for p, model in self.chain(task)]
+        return " → ".join(parts) if parts else "none"
 
     @property
     def enabled(self) -> bool:
@@ -154,9 +184,11 @@ class LLM:
                 continue
             answer = self._try_provider(provider, model, prompt, system, timeout)
             if answer:
+                if skipped:
+                    log.info("%s answered %s after skipping %s", provider.name, task, ", ".join(skipped))
                 return answer
-        if skipped and not chain:
-            log.debug("every provider for %s is cooling down: %s", task, ", ".join(skipped))
+        if skipped:
+            log.warning("every provider for %s is cooling down: %s", task, ", ".join(skipped))
         return ""
 
     def json(self, prompt: str, system: str = "", task: str = CLASSIFY, timeout: int = 45) -> dict[str, Any]:

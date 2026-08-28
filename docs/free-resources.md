@@ -40,10 +40,12 @@ Gmail API won because the requirement is "watch **my** inbox", not "receive mail
 
 | Option | Free tier | Notes |
 | --- | --- | --- |
-| **Google AI Studio / Gemini** | Free tier with generous RPM/RPD on flash models | Default choice, `LLM_PROVIDER=gemini`. |
-| **Groq** | Free developer tier, very fast | OpenAI-compatible, `LLM_PROVIDER=groq`. |
+| **Google AI Studio / Gemini** | Free tier with generous RPM/RPD on flash models | One hop in the classify chain. |
+| **Groq** | Free developer tier, very fast | First hop for triage — cheap and quick. |
+| **NVIDIA NIM** | Free keys on Llama 3.3 70B and similar | First hop for long job-page extracts. |
+| **DeepSeek** | Cheap/free-tier chat | Backup for extracts. |
+| **OpenRouter** free models | Rate-limited free routes | Last hop when the others are cooling down. |
 | **Ollama** local | Free, private | `llama3.1:8b` or `qwen2.5:7b` handle this triage fine on 16 GB RAM. |
-| **OpenRouter** free models | Rate-limited free routes | Same OpenAI-compatible shape as Groq if you want to add it. |
 
 Only ambiguous emails are sent to a model: job digests and obvious rejections never leave the box.
 

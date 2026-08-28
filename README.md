@@ -112,7 +112,7 @@ match — the pieces share the same database URL.
 | Dashboard | Fly.io / Oracle Cloud always-free VM | Oracle's ARM VM is the most generous permanent free compute. |
 | Database | SQLite file (default) | Zero setup; on GitHub Actions it lives in the Actions cache (expires after 7 idle days). |
 | Database | **Neon / Supabase free Postgres** | Durable across hosts: set `DATABASE_URL=postgresql+psycopg://…` and `pip install psycopg[binary]`. |
-| LLM (optional) | **Google AI Studio (Gemini)** free tier, **Groq** free tier, or local **Ollama** | Set `LLM_PROVIDER`. With `none`, the rule engine handles everything. |
+| LLM (optional) | **Groq**, **Gemini**, **NVIDIA NIM**, **DeepSeek**, **OpenRouter** free tiers, or local **Ollama** | Set `LLM_PROVIDER` to anything except `none`. Extra keys become automatic failover. |
 | Notifications | **Telegram bot** | Free and instant. `@BotFather` for the token, `@userinfobot` for the chat id. |
 
 Step-by-step for the recommended combo (Actions + Spaces + Neon):
@@ -158,8 +158,10 @@ Nothing is hard-coded and nothing but these two files (plus `secrets/`) is perso
 | Which mail to read | `GMAIL_QUERY` in `.env` | env var / Actions variable |
 | Your resume, target roles, skills | `config/profile.yaml` | `PROFILE_YAML` secret = the file's contents |
 | Score cutoff | `MIN_JOB_SCORE` in `.env` | env var |
-| Gemini key ([aistudio.google.com](https://aistudio.google.com/apikey)) | `GEMINI_API_KEY` + `LLM_PROVIDER=gemini` in `.env` | `GEMINI_API_KEY` secret |
-| Groq key ([console.groq.com](https://console.groq.com/keys)) | `GROQ_API_KEY` + `LLM_PROVIDER=groq` | `GROQ_API_KEY` secret |
+| Gemini key ([aistudio.google.com](https://aistudio.google.com/apikey)) | `GEMINI_API_KEY` | `GEMINI_API_KEY` secret |
+| Groq key ([console.groq.com](https://console.groq.com/keys)) | `GROQ_API_KEY` | `GROQ_API_KEY` secret |
+| NVIDIA NIM ([build.nvidia.com](https://build.nvidia.com)) | `NVIDIA_API_KEY` | `NVIDIA_API_KEY` secret |
+| DeepSeek / OpenRouter | `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY` | same names |
 | Local model instead | `LLM_PROVIDER=ollama`, `OLLAMA_MODEL` | n/a |
 | Telegram alerts | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | same names as secrets |
 | Dashboard password | `API_TOKEN` | same name; generated automatically on Render |
@@ -174,7 +176,7 @@ Nothing is hard-coded and nothing but these two files (plus `secrets/`) is perso
 | `GMAIL_QUERY` | Gmail search used each poll. Narrow it, e.g. `in:inbox -category:promotions -from:me`. |
 | `MIN_JOB_SCORE` | 0–1 cutoff for storing a posting. Start at 0.45, raise once you see the noise level. |
 | `SCRAPE_JOB_PAGES` | Fetch each posting page. Off = faster and quieter, but scores rely on the email snippet only. |
-| `LLM_PROVIDER` | `none` (default), `gemini`, `groq`, `ollama`. |
+| `LLM_PROVIDER` | `none` disables models. Any other value turns on failover across every key you set. |
 | `GMAIL_APPLY_LABEL` | Label processed mail in Gmail. Needs the `gmail.modify` scope — re-run `app.auth_setup` after enabling. |
 | `API_TOKEN` | Dashboard/API key. Leave as `change-me` for local-only, set it before exposing the app. |
 

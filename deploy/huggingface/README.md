@@ -24,6 +24,8 @@ YAML front matter above to build a Docker Space.
 | `DATABASE_URL` | secret | `postgresql+psycopg://...` from Neon |
 | `API_TOKEN` | secret | long random string, acts as the dashboard password |
 | `GEMINI_API_KEY` | secret | free key from Google AI Studio |
+| `GROQ_API_KEY` | secret | optional failover |
+| `NVIDIA_API_KEY` | secret | optional failover |
 | `LLM_PROVIDER` | variable | `gemini` |
 
 Set `API_TOKEN`. Without it the dashboard is readable by anyone who finds the Space URL.

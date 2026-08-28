@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlmodel import Session, select
 
 from .applications import dupe_key, record_email
-from .classify import JOB_ALERT, Classification, classify_email
+from .classify import FOLLOW_UP_KINDS, JOB_ALERT, Classification, classify_email
 from .config import get_profile, get_settings
 from .db import exists, get_state, init_db, session_scope, set_state
 from .email_parse import ParsedEmail, parse_message
@@ -230,8 +230,53 @@ def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult
     )
 
 
+def reclassify_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult:
+    """Re-triage mail we already stored. Does not scrape job links again."""
+    result = classify_email(email, get_profile(), llm, job_count=0)
+    record = session.get(Message, email.id)
+    if record is not None:
+        record.category = result.category
+        record.confidence = result.confidence
+        record.reason = result.reason[:200]
+        record.summary = result.summary[:1000]
+        session.add(record)
+
+    outreach = session.exec(select(Outreach).where(Outreach.message_id == email.id)).first()
+    if result.is_follow_up:
+        if outreach is None:
+            outreach = _store_outreach(session, email, result)
+        else:
+            outreach.kind = result.category
+            outreach.action_required = result.action_required or outreach.action_required
+            outreach.summary = (result.summary or outreach.summary)[:300]
+            outreach.urgency = result.urgency if result.urgency in ("high", "normal", "low") else outreach.urgency
+            session.add(outreach)
+    elif outreach is not None:
+        # Receipts used to be stored as follow-ups. Demote so the page hides them.
+        outreach.kind = result.category
+        session.add(outreach)
+        outreach = None
+
+    application = None
+    status_changed = False
+    if result.is_tracked:
+        tracked = record_email(session, email, result)
+        if tracked is not None:
+            application, status_changed = tracked
+
+    return EmailResult(
+        classification=result,
+        outreach=outreach,
+        application=application,
+        status_changed=status_changed,
+    )
+
+
 def run_once(
-    max_messages: int | None = None, since_days: int | None = None, query: str = ""
+    max_messages: int | None = None,
+    since_days: int | None = None,
+    query: str = "",
+    reclassify: bool = False,
 ) -> RunStats:
     started = time.time()
     stats = RunStats(started_at=datetime.now(timezone.utc).isoformat())
@@ -253,12 +298,17 @@ def run_once(
         log.info("query=%r -> %d message(s)", search, len(message_ids))
 
         for message_id in message_ids:
-            if session.get(Message, message_id):
+            already = session.get(Message, message_id)
+            if already and not reclassify:
                 stats.skipped += 1
                 continue
             try:
                 email = parse_message(gmail.get_message(message_id))
-                outcome = process_email(session, email, llm)
+                outcome = (
+                    reclassify_email(session, email, llm)
+                    if already
+                    else process_email(session, email, llm)
+                )
                 session.commit()
 
                 category = outcome.classification.category

@@ -50,7 +50,7 @@
   <h3>Applications ({{ report.applications_open }} in progress)</h3>
   <div class="chips">
     {% for status, count in report.applications %}
-    <span class="chip {% if status in ('interview', 'offer') %}on{% endif %}">
+    <span class="chip {% if status in ('interview', 'offer', 'next_step') %}on{% endif %}">
       {{ status.replace("_", " ") }}: {{ count }}
     </span>
     {% else %}

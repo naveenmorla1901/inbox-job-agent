@@ -58,11 +58,15 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 | `PROFILE_YAML` | entire contents of `config/profile.yaml` |
 | `DATABASE_URL` | the Neon string from step 1 |
 | `GEMINI_API_KEY` | free key from <https://aistudio.google.com/apikey> |
+| `GROQ_API_KEY` | free key from <https://console.groq.com/keys> |
+| `NVIDIA_API_KEY` | free key from <https://build.nvidia.com> (optional) |
+| `DEEPSEEK_API_KEY` | optional |
+| `OPENROUTER_API_KEY` | optional |
 | `TELEGRAM_BOT_TOKEN` | from `@BotFather` (optional) |
 | `TELEGRAM_CHAT_ID` | from `@userinfobot` (optional) |
 
-Then under the **Variables** tab: `LLM_PROVIDER` = `gemini`, and optionally `MIN_JOB_SCORE`
-and `GMAIL_QUERY`.
+Then under the **Variables** tab: `LLM_PROVIDER` = `gemini` (turns the chain on; every key
+you added is walked automatically), and optionally `MIN_JOB_SCORE` and `GMAIL_QUERY`.
 
 Run it once by hand: **Actions → poll-inbox → Run workflow**. The log ends with a JSON summary
 (`processed`, `jobs_matched`, `categories`). After that it runs itself every 15 minutes.
@@ -103,7 +107,11 @@ git checkout main
 | `DATABASE_URL` | secret | Neon string |
 | `API_TOKEN` | secret | a long random string — this is your dashboard password |
 | `GEMINI_API_KEY` | secret | your Gemini key |
-| `LLM_PROVIDER` | variable | `gemini` |
+| `GROQ_API_KEY` | secret | your Groq key |
+| `NVIDIA_API_KEY` | secret | optional |
+| `DEEPSEEK_API_KEY` | secret | optional |
+| `OPENROUTER_API_KEY` | secret | optional |
+| `LLM_PROVIDER` | variable | `gemini` (turns failover on) |
 
 4. Open the Space URL, enter the `API_TOKEN` at the login prompt. Same data the Actions poller
    writes, because both point at the same Neon database.

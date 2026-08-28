@@ -23,6 +23,7 @@ def cmd_poll(args: argparse.Namespace) -> None:
         max_messages=args.max,
         since_days=getattr(args, "days", None),
         query=getattr(args, "query", "") or "",
+        reclassify=getattr(args, "refresh", False),
     )
     print(json.dumps(stats.as_dict(), indent=2))
     if getattr(args, "days", None) is not None:
@@ -187,6 +188,11 @@ def main() -> None:
     poll.add_argument("--max", type=int, default=None)
     poll.add_argument("--days", type=int, default=None, help="ignore the cursor, look back N days")
     poll.add_argument("--query", default="", help="override GMAIL_QUERY for this run")
+    poll.add_argument(
+        "--refresh",
+        action="store_true",
+        help="re-triage mail already stored (picks up next-step / video rounds)",
+    )
     poll.set_defaults(func=cmd_poll)
 
     doctor = sub.add_parser("doctor", help="check Gmail, LLM, database, Telegram and scraping")

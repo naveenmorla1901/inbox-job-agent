@@ -100,3 +100,67 @@ def test_recruiter_mail_becomes_an_outreach_row(session):
     assert item.kind == "recruiter_outreach"
     assert item.person == "Priya R"
     assert item.urgency == "high"  # "today" in the body
+
+
+def test_application_receipt_is_tracked_but_not_a_follow_up(session):
+    mail = plain_email(
+        "no-reply@greenhouse.io",
+        "Thank you for applying to Data Scientist at Northwind Labs",
+        "We have received your application and will review it shortly.",
+    )
+    mail.id = "receipt-1"
+    outcome = pipeline.process_email(session, mail, LLM())
+    session.commit()
+
+    assert outcome.application is not None
+    assert outcome.outreach is None
+    assert session.exec(select(Outreach)).all() == []
+
+
+def test_refresh_promotes_a_video_round_onto_follow_ups(session):
+    receipt = plain_email(
+        "no-reply@hirevue.com",
+        "Thanks for applying",
+        "We have received your application.",
+        name="Acme Talent",
+    )
+    receipt.id = "video-1"
+    pipeline.process_email(session, receipt, LLM())
+    session.commit()
+    assert session.exec(select(Outreach)).all() == []
+
+    video = plain_email(
+        "no-reply@hirevue.com",
+        "Please record a short video",
+        "Your next step is a one-way video interview. Record a video answering three questions.",
+        name="Acme Talent",
+    )
+    video.id = "video-1"
+    outcome = pipeline.reclassify_email(session, video, LLM())
+    session.commit()
+    assert outcome.classification.category == "next_step"
+    assert outcome.outreach is not None
+    assert session.exec(select(Outreach)).one().kind == "next_step"
+
+
+def test_refresh_demotes_a_receipt_off_follow_ups(session):
+    video = plain_email(
+        "careers@sharkninja.com",
+        "Please record a short video",
+        "Record a video for the next step in the interview process.",
+    )
+    video.id = "demote-1"
+    pipeline.process_email(session, video, LLM())
+    session.commit()
+    assert session.exec(select(Outreach)).one().kind == "next_step"
+
+    receipt = plain_email(
+        "careers@sharkninja.com",
+        "Thank you for applying to SharkNinja",
+        "We've received your application. What's next? We will review it and get back to you.",
+    )
+    receipt.id = "demote-1"
+    outcome = pipeline.reclassify_email(session, receipt, LLM())
+    session.commit()
+    assert outcome.outreach is None
+    assert session.exec(select(Outreach)).one().kind == "application_update"

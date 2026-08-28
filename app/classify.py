@@ -52,12 +52,13 @@ VIDEO_STEP_RE = re.compile(
     re.I,
 )
 # Weaker "go and do something" signals, checked after live interviews and tests.
+# Do not match "what's next? we'll review your application" — that is a receipt.
 NEXT_STEP_RE = re.compile(
-    r"(next steps? (in|of|for) (your|the) (application|process|candidacy)|"
-    r"complete (the |your )?(following|next) steps?|"
+    r"(complete (the |your )?(following|next) steps?|"
+    r"next step.{0,80}(please|kindly|record|complete|submit|upload|fill)|"
     r"(please|kindly) (complete|submit|provide|upload|fill in|fill out|answer)[^.\n]{0,60}"
     r"(form|questionnaire|survey|document|profile|details|information|questions)|"
-    r"background check|reference check|work authoriou?sation form|"
+    r"background check|reference check|work authori[sz]ation form|"
     r"screening questions|pre[- ]screen(ing)? questions|"
     r"additional information (is )?(needed|required))",
     re.I,
@@ -196,11 +197,11 @@ def classify_rules(email: ParsedEmail, profile: Profile, job_count: int = 0) -> 
         return Classification(ASSESSMENT, 0.85, "assessment language")
     if NEXT_STEP_RE.search(blob):
         return Classification(NEXT_STEP, 0.8, "asks you to complete a step")
+    if APPLIED_RE.search(blob):
+        return Classification(APPLICATION_UPDATE, 0.8, "application acknowledgement")
     if RECRUITER_RE.search(blob):
         confidence = 0.6 if automated else 0.85
         return Classification(RECRUITER, confidence, "recruiter outreach language")
-    if APPLIED_RE.search(blob):
-        return Classification(APPLICATION_UPDATE, 0.8, "application acknowledgement")
     if MARKETING_RE.search(blob):
         return Classification(OTHER, 0.7, "marketing/transactional")
     if job_count >= 1 and ALERT_SUBJECT.search(subject):

@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, col, func, select
 
 from .applications import CLOSED_STATUSES, STATUS_RANK, create_from_job, stale_applications
-from .classify import NOREPLY_RE
+from .classify import FOLLOW_UP_KINDS, NOREPLY_RE
 from .config import ROOT, get_profile, get_settings
 from .db import get_engine, init_db
 from .models import Application, ApplicationEvent, Job, Message, Outreach
@@ -121,7 +121,9 @@ def jobs_page(
     jobs = session.exec(stmt.order_by(order).limit(300)).all()
 
     pending_outreach = session.exec(
-        select(func.count()).select_from(Outreach).where(Outreach.handled == False)  # noqa: E712
+        select(func.count())
+        .select_from(Outreach)
+        .where(Outreach.handled == False, col(Outreach.kind).in_(FOLLOW_UP_KINDS))  # noqa: E712
     ).one()
 
     return templates.TemplateResponse(
@@ -279,7 +281,7 @@ def outreach_page(
     who: str = "all",
 ):
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    stmt = select(Outreach).where(Outreach.received_at >= since)
+    stmt = select(Outreach).where(Outreach.received_at >= since, col(Outreach.kind).in_(FOLLOW_UP_KINDS))
     if show == "open":
         stmt = stmt.where(Outreach.handled == False)  # noqa: E712
     items = session.exec(stmt.order_by(col(Outreach.received_at).desc()).limit(300)).all()
@@ -349,7 +351,9 @@ def api_stats(session: Session = Depends(db_session)) -> dict:
         "messages": count(Message),
         "jobs": count(Job),
         "jobs_new": count(Job, Job.status == "new"),
-        "outreach_open": count(Outreach, Outreach.handled == False),  # noqa: E712
+        "outreach_open": count(
+            Outreach, Outreach.handled == False, col(Outreach.kind).in_(FOLLOW_UP_KINDS)  # noqa: E712
+        ),
     }
 
 

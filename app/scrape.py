@@ -313,7 +313,11 @@ def llm_extract(page_text: str, llm, candidate: JobCandidate) -> ScrapedJob | No
     """Last resort: let a free-tier model read the page text and pull the fields out."""
     if not llm or not llm.enabled or len(page_text) < 200:
         return None
-    data = llm.json(LLM_EXTRACT_PROMPT.format(text=page_text[:12000]), LLM_EXTRACT_SYSTEM)
+    data = llm.json(
+        LLM_EXTRACT_PROMPT.format(text=page_text[:12000]),
+        LLM_EXTRACT_SYSTEM,
+        task="extract",
+    )
     if not data or data.get("is_job_posting") is False:
         return None
     description = str(data.get("description", ""))

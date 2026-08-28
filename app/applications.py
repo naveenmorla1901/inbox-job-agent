@@ -352,6 +352,12 @@ def record_email(
     if not normalise_company(company):
         return None
 
+    existing_event = None
+    if email.id:
+        existing_event = session.exec(
+            select(ApplicationEvent).where(ApplicationEvent.message_id == email.id)
+        ).first()
+
     # A cold recruiter pitch is not an application: only attach it to one that already exists.
     application = find_application(session, company, role)
     if application is None:
@@ -377,6 +383,14 @@ def record_email(
         application.last_event = kind
         application.next_action = result.action_required or application.next_action
     link_job(session, application, application.company, application.role or role)
+
+    if existing_event is not None:
+        existing_event.kind = kind
+        existing_event.subject = email.subject[:300]
+        existing_event.summary = (result.summary or email.snippet)[:800]
+        session.add(existing_event)
+        session.add(application)
+        return application, changed
 
     session.add(
         ApplicationEvent(

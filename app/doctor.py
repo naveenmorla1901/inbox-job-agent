@@ -132,38 +132,32 @@ def check_gmail(report: Report) -> None:
 
 def check_llm(report: Report) -> None:
     settings = get_settings()
-    from .llm import LLM
+    from .llm import CLASSIFY, EXTRACT, LLM
 
     llm = LLM(settings)
-    if llm.provider == "none":
-        report.add("LLM", SKIP, "disabled - rules only (this is a valid setup)")
-        return
+    classify = llm.describe(CLASSIFY)
+    extract = llm.describe(EXTRACT)
     if not llm.enabled:
         report.add(
             "LLM",
-            WARN,
-            f"{llm.provider} selected but no key set; falling back to rules",
-            {
-                "gemini": "get a free key at https://aistudio.google.com/apikey, put it in GEMINI_API_KEY",
-                "groq": "get a free key at https://console.groq.com/keys, put it in GROQ_API_KEY",
-            }.get(llm.provider, "set the provider's API key in .env"),
+            SKIP,
+            "disabled - rules only (this is a valid setup)",
+            "set LLM_PROVIDER to gemini (or groq) and add any of GEMINI_API_KEY, GROQ_API_KEY, "
+            "NVIDIA_API_KEY, DEEPSEEK_API_KEY, OPENROUTER_API_KEY",
         )
         return
 
     answer = llm.json('Reply with {"ping": "pong"} and nothing else.', "You output JSON only.")
     if answer:
-        model = {
-            "gemini": settings.gemini_model,
-            "groq": settings.groq_model,
-            "ollama": settings.ollama_model,
-        }.get(llm.provider, "")
-        report.add("LLM", OK, f"{llm.provider} ({model}) answered")
+        report.add("LLM", OK, f"classify {classify}")
+        if extract != classify:
+            report.add("LLM extract", OK, extract)
     else:
         report.add(
             "LLM",
             WARN,
-            f"{llm.provider} key set but the test call returned nothing",
-            "check the key, the model name, and that the free tier is not rate limited",
+            f"chain ready ({classify}) but the test call returned nothing",
+            "the first provider is likely rate-limited; the next poll will skip it for a while",
         )
 
 

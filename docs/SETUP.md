@@ -108,25 +108,45 @@ You want:
 
 ---
 
-## Step 2 — Gemini key (free)
+## Step 2 — LLM keys (free, optional, several is better than one)
 
 Used only for emails the rules cannot classify confidently, and to rescue job details when a site
-blocks the scraper. The app works without it.
+blocks the scraper. The app works without any of them. If you add more than one key, a provider
+that rate-limits is skipped for 15 minutes and the next one answers.
 
-1. Go to <https://aistudio.google.com/apikey> → **Create API key** → pick your project → copy.
-2. In `.env`:
+1. Pick any of these free keys and paste them into `.env`. Leave the rest blank.
+
+| Provider | Where to get a key | `.env` name |
+| --- | --- | --- |
+| Groq (fast, first for triage) | <https://console.groq.com/keys> | `GROQ_API_KEY` |
+| Gemini | <https://aistudio.google.com/apikey> | `GEMINI_API_KEY` |
+| NVIDIA NIM | <https://build.nvidia.com> → any Llama 3.3 endpoint → Generate API key | `NVIDIA_API_KEY` |
+| DeepSeek | <https://platform.deepseek.com/api_keys> | `DEEPSEEK_API_KEY` |
+| OpenRouter (free models) | <https://openrouter.ai/keys> | `OPENROUTER_API_KEY` |
+
+2. Turn models on:
 
 ```ini
 LLM_PROVIDER=gemini
-GEMINI_API_KEY=AIza...your key...
-GEMINI_MODEL=gemini-2.0-flash
 ```
 
-**Verify:** `doctor` should print `[ ok ] LLM  gemini (gemini-2.0-flash) answered` — that is a real
-round trip to the API, not a config check.
+That value only means "LLMs are on". The walk order is independent of it:
 
-Alternatives: `LLM_PROVIDER=groq` with a key from <https://console.groq.com/keys>,
-`LLM_PROVIDER=ollama` for a local model, or `LLM_PROVIDER=none` to stay fully offline.
+- **classify** (every ambiguous email, short prompt): groq → gemini → nvidia → deepseek → openrouter
+- **extract** (rare, a blocked job page): nvidia → deepseek → gemini → groq → openrouter
+
+To pin a cheaper classify model and keep a stronger one for extracts:
+
+```ini
+LLM_CHAIN_CLASSIFY=groq:llama-3.3-70b-versatile,gemini:gemini-2.0-flash
+LLM_CHAIN_EXTRACT=nvidia,deepseek,gemini
+```
+
+**Verify:** `doctor` should print `[ ok ] LLM  classify groq:… → gemini:…` — that is a real
+round trip to the first provider that answers.
+
+`LLM_PROVIDER=none` stays fully offline (rules only), even if keys are present.
+Brave Search and Appy Pie are not used; job pages are fetched directly.
 
 ---
 

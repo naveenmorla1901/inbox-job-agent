@@ -8,6 +8,7 @@ from sqlmodel import Session, col, func, select
 from .classify import (
     APPLICATION_UPDATE,
     ASSESSMENT,
+    FOLLOW_UP_KINDS,
     INTERVIEW,
     JOB_ALERT,
     NEXT_STEP,
@@ -105,7 +106,11 @@ def build_breakdown(session: Session, days: int = 1) -> Breakdown:
         session.exec(
             select(func.count())
             .select_from(Outreach)
-            .where(Outreach.received_at >= since, Outreach.handled == False)  # noqa: E712
+            .where(
+                Outreach.received_at >= since,
+                Outreach.handled == False,  # noqa: E712
+                col(Outreach.kind).in_(FOLLOW_UP_KINDS),
+            )
         ).one()
     )
 

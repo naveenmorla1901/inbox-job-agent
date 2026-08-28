@@ -42,6 +42,11 @@
         {% if application.source %}<span>· {{ application.source }}</span>{% endif %}
         {% if application.id in stale %}<span style="color: var(--warn)">· silent 14+ days</span>{% endif %}
       </div>
+      {% if application.job_url %}
+      <div class="meta">
+        <a href="{{ application.job_url }}" target="_blank" rel="noopener" class="joblink">{{ application.job_url }}</a>
+      </div>
+      {% endif %}
       {% if application.next_action %}
       <p style="margin:6px 0 0; color: var(--warn)"><b>Action:</b> {{ application.next_action }}</p>
       {% endif %}
