@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any
 
 import httpx
@@ -15,6 +16,11 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:ge
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 JSON_BLOCK = re.compile(r"\{.*\}", re.S)
+
+# Free tiers answer 429/503 under load often enough that one attempt is not enough.
+RETRY_STATUS = {408, 429, 500, 502, 503, 504}
+MAX_ATTEMPTS = 3
+BACKOFF_SECONDS = 2.0
 
 
 class LLM:
@@ -35,25 +41,50 @@ class LLM:
             return True
         return False
 
+    def _redact(self, text: str) -> str:
+        """Provider errors quote the request URL, which carries the API key."""
+        for secret in (self.settings.gemini_api_key, self.settings.groq_api_key):
+            if secret:
+                text = text.replace(secret, "***")
+        return text
+
+    def _call(self, prompt: str, system: str, timeout: int) -> str:
+        if self.provider == "gemini":
+            return self._gemini(prompt, system, timeout)
+        if self.provider == "groq":
+            return self._openai_compatible(
+                GROQ_URL,
+                self.settings.groq_api_key,
+                self.settings.groq_model,
+                prompt,
+                system,
+                timeout,
+            )
+        if self.provider == "ollama":
+            return self._ollama(prompt, system, timeout)
+        return ""
+
     def complete(self, prompt: str, system: str = "", timeout: int = 45) -> str:
         if not self.enabled:
             return ""
-        try:
-            if self.provider == "gemini":
-                return self._gemini(prompt, system, timeout)
-            if self.provider == "groq":
-                return self._openai_compatible(
-                    GROQ_URL,
-                    self.settings.groq_api_key,
-                    self.settings.groq_model,
-                    prompt,
-                    system,
-                    timeout,
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                return self._call(prompt, system, timeout)
+            except httpx.HTTPStatusError as exc:
+                retryable = exc.response.status_code in RETRY_STATUS
+                if retryable and attempt < MAX_ATTEMPTS:
+                    time.sleep(BACKOFF_SECONDS * attempt)
+                    continue
+                log.warning(
+                    "LLM call failed (%s, attempt %d): %s",
+                    self.provider,
+                    attempt,
+                    self._redact(str(exc)),
                 )
-            if self.provider == "ollama":
-                return self._ollama(prompt, system, timeout)
-        except Exception as exc:
-            log.warning("LLM call failed (%s): %s", self.provider, exc)
+                break
+            except Exception as exc:
+                log.warning("LLM call failed (%s): %s", self.provider, self._redact(str(exc)))
+                break
         return ""
 
     def json(self, prompt: str, system: str = "", timeout: int = 45) -> dict[str, Any]:

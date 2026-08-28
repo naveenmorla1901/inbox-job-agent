@@ -4,7 +4,7 @@ import logging
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from .config import ROOT, get_settings
@@ -28,7 +28,22 @@ def get_engine():
                 url = f"sqlite:///{path}"
         connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
         _engine = create_engine(url, connect_args=connect_args, pool_pre_ping=True)
+        if url.startswith("sqlite"):
+            enforce_sqlite_foreign_keys(_engine)
     return _engine
+
+
+def enforce_sqlite_foreign_keys(engine) -> None:
+    """SQLite ignores foreign keys unless asked; Postgres never does.
+
+    Without this a local run happily writes rows that Neon rejects.
+    """
+
+    @event.listens_for(engine, "connect")
+    def _set_pragma(dbapi_connection, _record):  # pragma: no cover - trivial
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 def init_db() -> None:

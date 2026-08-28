@@ -45,8 +45,10 @@ REJECTION_RE = re.compile(
     re.I,
 )
 APPLIED_RE = re.compile(
-    r"(thank you for (applying|your (interest|application))|application (was )?(received|submitted)|"
-    r"we (have )?received your application|your application (to|for|is)|application status)",
+    r"(thank(s| you)?( very much)? for (applying|your (interest|application))|"
+    r"thank(s| you)? for taking the time to apply|"
+    r"application (was )?(received|submitted|complete)|successfully (submitted|applied)|"
+    r"we (have )?received your application|your application (to|for|is|has)|application status)",
     re.I,
 )
 RECRUITER_RE = re.compile(

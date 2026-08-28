@@ -13,10 +13,12 @@ from tests.test_classify import email as plain_email
 @pytest.fixture()
 def session(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    db.enforce_sqlite_foreign_keys(engine)
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db, "_engine", engine)
     settings = get_settings()
     monkeypatch.setattr(settings, "scrape_job_pages", False, raising=False)
+    monkeypatch.setattr(settings, "llm_provider", "none", raising=False)
     with Session(engine) as s:
         yield s
 

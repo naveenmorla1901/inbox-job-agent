@@ -178,6 +178,25 @@ def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult
     candidates = extract_from_email(email, limit=settings.max_jobs_per_email)
     result = classify_email(email, get_profile(), llm, job_count=len(candidates))
 
+    # The message row has to land before anything referencing it: the dedupe lookups below
+    # autoflush pending jobs mid-loop, and Postgres enforces the foreign key SQLite ignored.
+    record = Message(
+        id=email.id,
+        thread_id=email.thread_id,
+        sender=email.sender_name[:200],
+        sender_email=email.sender_email[:200],
+        subject=email.subject[:300],
+        snippet=email.snippet[:500],
+        received_at=email.received_at,
+        category=result.category,
+        confidence=result.confidence,
+        reason=result.reason[:200],
+        summary=result.summary[:1000],
+        jobs_found=len(candidates),
+    )
+    session.add(record)
+    session.flush()
+
     jobs: list[Job] = []
     outreach: Outreach | None = None
     application: Application | None = None
@@ -196,23 +215,8 @@ def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult
         if tracked is not None:
             application, status_changed = tracked
 
-    session.add(
-        Message(
-            id=email.id,
-            thread_id=email.thread_id,
-            sender=email.sender_name[:200],
-            sender_email=email.sender_email[:200],
-            subject=email.subject[:300],
-            snippet=email.snippet[:500],
-            received_at=email.received_at,
-            category=result.category,
-            confidence=result.confidence,
-            reason=result.reason[:200],
-            summary=result.summary[:1000],
-            jobs_found=len(candidates),
-            jobs_matched=sum(1 for job in jobs if job.matched),
-        )
-    )
+    record.jobs_matched = sum(1 for job in jobs if job.matched)
+    session.add(record)
     return EmailResult(
         classification=result,
         jobs=jobs,
