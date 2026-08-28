@@ -209,8 +209,11 @@ def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult
             else {}
         )
         jobs = _store_jobs(session, email, candidates, scraped, llm)
-    elif result.is_outreach:
-        outreach = _store_outreach(session, email, result)
+    elif result.is_tracked:
+        # Acknowledgements and rejections belong to the application timeline only; the
+        # Follow-ups page is for mail that still wants something from you.
+        if result.is_follow_up:
+            outreach = _store_outreach(session, email, result)
         tracked = record_email(session, email, result)
         if tracked is not None:
             application, status_changed = tracked

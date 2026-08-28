@@ -3,8 +3,8 @@
 {% block content %}
 <form class="filters" method="get" action="/outreach">
   <select name="who">
-    <option value="people" {% if who == 'people' %}selected{% endif %}>from a person</option>
-    <option value="all" {% if who == 'all' %}selected{% endif %}>include automated mail</option>
+    <option value="all" {% if who == 'all' %}selected{% endif %}>anyone</option>
+    <option value="people" {% if who == 'people' %}selected{% endif %}>people only</option>
   </select>
   <select name="show">
     <option value="open" {% if show == 'open' %}selected{% endif %}>open only</option>
@@ -20,8 +20,10 @@
 
 {% if not items %}
   <p class="empty">
-    Nothing here. Anything a human sends you — recruiter pitches, interview scheduling,
-    assessments, offers — lands on this page.
+    Nothing waiting on you. Only mail that wants something back lands here: recruiter
+    pitches, interview scheduling, assessments, recorded-video rounds and other next steps,
+    and offers. Plain "we received your application" mail goes to
+    <a href="/applications">Applications</a> instead.
   </p>
 {% endif %}
 

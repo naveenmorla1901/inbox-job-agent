@@ -12,6 +12,9 @@
         <span>· {{ job.received_at.strftime("%b %d, %Y") }}</span>
         <span>· status: {{ job.status }}</span>
       </div>
+      <div class="meta">
+        <a href="{{ job.url }}" target="_blank" rel="noopener" class="joblink">{{ job.url }}</a>
+      </div>
     </div>
     <div class="score {% if job.score >= 0.7 %}s-hi{% elif job.score >= 0.55 %}s-mid{% else %}s-lo{% endif %}">
       {{ "%.2f"|format(job.score) }}

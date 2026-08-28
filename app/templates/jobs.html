@@ -49,6 +49,9 @@
         {% if not job.matched %}<span>· below threshold</span>{% endif %}
         {% if job.duplicate_of %}<span>· repeat of #{{ job.duplicate_of }}</span>{% endif %}
       </div>
+      <div class="meta">
+        <a href="{{ job.url }}" target="_blank" rel="noopener" class="joblink">{{ job.url }}</a>
+      </div>
       <div class="chips">
         {% for skill in (job.matched_skills or "").split(", ") if skill %}
         <span class="chip on">{{ skill }}</span>
@@ -63,6 +66,8 @@
     </div>
   </div>
   <div class="actions">
+    <a href="{{ job.url }}" target="_blank" rel="noopener">open posting</a>
+    <a href="https://mail.google.com/mail/u/0/#inbox/{{ job.message_id }}" target="_blank" rel="noopener">open mail</a>
     {% for action in ["saved", "applied", "ignored", "new"] if action != job.status %}
     <form method="post" action="/job/{{ job.id }}/status">
       <input type="hidden" name="status" value="{{ action }}">

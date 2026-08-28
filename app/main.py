@@ -276,7 +276,7 @@ def outreach_page(
     session: Session = Depends(db_session),
     show: str = "open",
     days: int = 60,
-    who: str = "people",
+    who: str = "all",
 ):
     since = datetime.now(timezone.utc) - timedelta(days=days)
     stmt = select(Outreach).where(Outreach.received_at >= since)

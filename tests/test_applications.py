@@ -63,8 +63,8 @@ def test_confirmation_email_starts_tracking(session):
     assert outcome.application is not None
     assert application.company == "Northwind Labs"
     assert application.role == "Data Scientist"
-    assert application.status == "in_review"
-    assert session.exec(select(ApplicationEvent)).one().kind == "application_update"
+    assert application.status == "applied", "a receipt means applied, not under review"
+    assert session.exec(select(ApplicationEvent)).one().kind == "submitted"
 
 
 def test_pipeline_advances_through_stages_and_never_regresses(session):

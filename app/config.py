@@ -31,11 +31,22 @@ class Settings(BaseSettings):
     scrape_job_pages: bool = True
     scrape_timeout: int = 15
 
-    llm_provider: str = "none"
+    # Ordered "provider:model" chains. The first one that answers wins, so put the
+    # cheapest model that can do the job first and keep the big ones as backup.
+    llm_chain: str = ""
+    llm_chain_classify: str = ""  # high volume, short prompts: use a small fast model
+    llm_chain_extract: str = ""  # rare, long prompts: worth a stronger model
+    llm_cooldown_seconds: int = 900  # how long to skip a provider after it rate limits
+    llm_classify_body_chars: int = 4000
+
+    llm_provider: str = "none"  # legacy single-provider setting, still honoured
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
+    deepseek_api_key: str = ""
+    nvidia_api_key: str = ""
+    openrouter_api_key: str = ""
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
 

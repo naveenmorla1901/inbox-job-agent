@@ -3,23 +3,29 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .config import Profile
+from .config import Profile, get_settings
 from .email_parse import ParsedEmail
 from .extract_jobs import JOB_HOSTS
-from .llm import LLM
+from .llm import CLASSIFY, LLM
 
 JOB_ALERT = "job_alert"
 RECRUITER = "recruiter_outreach"
 INTERVIEW = "interview_invite"
 ASSESSMENT = "assessment"
+NEXT_STEP = "next_step"
 OFFER = "offer"
 REJECTION = "rejection"
 APPLICATION_UPDATE = "application_update"
 OTHER = "other"
 
 # Categories worth a push notification, most urgent first.
-NOTIFY_KINDS = (OFFER, INTERVIEW, ASSESSMENT, RECRUITER)
-OUTREACH_KINDS = (OFFER, INTERVIEW, ASSESSMENT, RECRUITER, REJECTION, APPLICATION_UPDATE)
+NOTIFY_KINDS = (OFFER, INTERVIEW, ASSESSMENT, NEXT_STEP, RECRUITER)
+# What lands on the Follow-ups page: things that want something from you. Plain
+# acknowledgements and rejections are tracked as applications instead.
+FOLLOW_UP_KINDS = (OFFER, INTERVIEW, ASSESSMENT, NEXT_STEP, RECRUITER)
+# Everything that moves an application forward, whether or not it needs a reply.
+TRACKED_KINDS = (*FOLLOW_UP_KINDS, REJECTION, APPLICATION_UPDATE)
+OUTREACH_KINDS = TRACKED_KINDS  # kept for older callers
 
 ALERT_SUBJECT = re.compile(
     r"(job alert|jobs? for you|new jobs?|\d+\s+new\s+(job|opportunit)|"
@@ -34,7 +40,33 @@ INTERVIEW_RE = re.compile(
 )
 ASSESSMENT_RE = re.compile(
     r"(coding (challenge|assessment|test)|online assessment|take[- ]home|hackerrank|codesignal|"
-    r"codility|karat|hirevue|technical assessment|skills? test)",
+    r"codility|karat|technical assessment|skills? test)",
+    re.I,
+)
+# A recorded-video round is a real next step, but it is not a live interview and not a
+# coding test, so it used to fall through to "application update" and disappear.
+VIDEO_STEP_RE = re.compile(
+    r"(record (a |your )?(short )?video|video (submission|response|introduction|interview)|"
+    r"one[- ]way (video )?interview|on[- ]demand interview|asynchronous interview|"
+    r"hirevue|spark ?hire|willo\.video|vidcruiter|myinterview|talview)",
+    re.I,
+)
+# Weaker "go and do something" signals, checked after live interviews and tests.
+NEXT_STEP_RE = re.compile(
+    r"(next steps? (in|of|for) (your|the) (application|process|candidacy)|"
+    r"complete (the |your )?(following|next) steps?|"
+    r"(please|kindly) (complete|submit|provide|upload|fill in|fill out|answer)[^.\n]{0,60}"
+    r"(form|questionnaire|survey|document|profile|details|information|questions)|"
+    r"background check|reference check|work authoriou?sation form|"
+    r"screening questions|pre[- ]screen(ing)? questions|"
+    r"additional information (is )?(needed|required))",
+    re.I,
+)
+# An acknowledgement that the application landed, as opposed to a status change.
+SUBMITTED_RE = re.compile(
+    r"(successfully (submitted|applied)|application (was |has been )?(received|submitted|complete)|"
+    r"we (have )?received your application|thank(s| you)?( very much)? for (applying|your application)|"
+    r"your application (has been|was) (received|submitted)|application confirmation)",
     re.I,
 )
 OFFER_RE = re.compile(r"(offer letter|pleased to offer|job offer|we are excited to offer)", re.I)
@@ -81,11 +113,13 @@ CLASSIFIER_PROMPT = """Classify this email.
 Allowed categories:
 - job_alert: automated digest listing multiple job postings
 - recruiter_outreach: a recruiter/hiring manager contacting the candidate about a role
-- interview_invite: interview scheduling, availability request, or confirmed interview
+- interview_invite: a live interview - scheduling, availability request, or confirmation
 - assessment: coding test / online assessment / take-home
+- next_step: any other task the employer asks the candidate to do - record a one-way
+  video, fill in a questionnaire or form, upload documents, background/reference check
 - offer: job offer
 - rejection: application declined
-- application_update: application received/under review status mail
+- application_update: application received or under review, nothing to do
 - other: anything else (newsletters, bills, social, marketing)
 
 Return JSON:
@@ -113,8 +147,18 @@ class Classification:
     urgency: str = "normal"
 
     @property
+    def is_follow_up(self) -> bool:
+        """Wants something from you, so it belongs on the Follow-ups page."""
+        return self.category in FOLLOW_UP_KINDS
+
+    @property
+    def is_tracked(self) -> bool:
+        """Belongs to an application, whether or not it needs a reply."""
+        return self.category in TRACKED_KINDS
+
+    @property
     def is_outreach(self) -> bool:
-        return self.category in OUTREACH_KINDS
+        return self.is_follow_up
 
     @property
     def should_notify(self) -> bool:
@@ -144,10 +188,14 @@ def classify_rules(email: ParsedEmail, profile: Profile, job_count: int = 0) -> 
         return Classification(OFFER, 0.9, "offer language")
     if REJECTION_RE.search(blob):
         return Classification(REJECTION, 0.85, "rejection language")
-    if ASSESSMENT_RE.search(blob):
-        return Classification(ASSESSMENT, 0.85, "assessment language")
+    if VIDEO_STEP_RE.search(blob):
+        return Classification(NEXT_STEP, 0.85, "recorded video round")
     if INTERVIEW_RE.search(blob):
         return Classification(INTERVIEW, 0.85, "interview scheduling language")
+    if ASSESSMENT_RE.search(blob):
+        return Classification(ASSESSMENT, 0.85, "assessment language")
+    if NEXT_STEP_RE.search(blob):
+        return Classification(NEXT_STEP, 0.8, "asks you to complete a step")
     if RECRUITER_RE.search(blob):
         confidence = 0.6 if automated else 0.85
         return Classification(RECRUITER, confidence, "recruiter outreach language")
@@ -184,12 +232,13 @@ def classify_email(
                 sender=email.sender_name,
                 sender_email=email.sender_email,
                 subject=email.subject,
-                body=email.body(6000),
+                body=email.body(get_settings().llm_classify_body_chars),
             ),
             CLASSIFIER_SYSTEM,
+            task=CLASSIFY,
         )
         category = str(data.get("category", "")).strip().lower()
-        if category in (JOB_ALERT, *OUTREACH_KINDS, OTHER):
+        if category in (JOB_ALERT, *TRACKED_KINDS, OTHER):
             result = Classification(
                 category=category,
                 confidence=float(data.get("confidence") or 0.7),

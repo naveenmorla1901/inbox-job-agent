@@ -9,9 +9,11 @@ from .classify import (
     APPLICATION_UPDATE,
     ASSESSMENT,
     INTERVIEW,
+    NEXT_STEP,
     OFFER,
     RECRUITER,
     REJECTION,
+    SUBMITTED_RE,
     Classification,
 )
 from .config import get_profile
@@ -22,14 +24,16 @@ from .models import Application, ApplicationEvent, Job, as_utc, utcnow
 STATUS_RANK = {
     "applied": 1,
     "in_review": 2,
-    "assessment": 3,
-    "interview": 4,
-    "offer": 5,
-    "rejected": 6,
-    "withdrawn": 6,
+    "next_step": 3,
+    "assessment": 4,
+    "interview": 5,
+    "offer": 6,
+    "rejected": 7,
+    "withdrawn": 7,
 }
 CATEGORY_STATUS = {
     APPLICATION_UPDATE: "in_review",
+    NEXT_STEP: "next_step",
     ASSESSMENT: "assessment",
     INTERVIEW: "interview",
     OFFER: "offer",
@@ -337,6 +341,13 @@ def record_email(
     if status is None:
         return None
 
+    # "We received your application" is the application starting, not a review of it.
+    kind = result.category
+    if result.category == APPLICATION_UPDATE and SUBMITTED_RE.search(
+        f"{email.subject}\n{email.body(2000)}"
+    ):
+        status, kind = "applied", "submitted"
+
     company, role = extract_company_role(email, result)
     if not normalise_company(company):
         return None
@@ -363,14 +374,14 @@ def record_email(
         application.match_key = match_key(application.company, role)
     if as_utc(email.received_at) >= as_utc(application.last_event_at):
         application.last_event_at = email.received_at
-        application.last_event = result.category
+        application.last_event = kind
         application.next_action = result.action_required or application.next_action
     link_job(session, application, application.company, application.role or role)
 
     session.add(
         ApplicationEvent(
             application_id=application.id,
-            kind=result.category,
+            kind=kind,
             subject=email.subject[:300],
             summary=(result.summary or email.snippet)[:800],
             message_id=email.id,

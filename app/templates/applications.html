@@ -11,8 +11,8 @@
 
 <div class="card">
   <div class="chips">
-    {% for status in ["applied", "in_review", "assessment", "interview", "offer", "rejected"] %}
-    <span class="chip {% if status in ('interview', 'offer') %}on{% endif %}">
+    {% for status in ["applied", "in_review", "next_step", "assessment", "interview", "offer", "rejected"] %}
+    <span class="chip {% if status in ('interview', 'offer', 'next_step') %}on{% endif %}">
       {{ status.replace("_", " ") }}: {{ counts.get(status, 0) }}
     </span>
     {% endfor %}
@@ -27,7 +27,7 @@
 {% endif %}
 
 {% for application in applications %}
-<div class="card {% if application.status in ('interview', 'offer') %}u-high{% else %}u-normal{% endif %}">
+<div class="card {% if application.status in ('interview', 'offer', 'next_step', 'assessment') %}u-high{% else %}u-normal{% endif %}">
   <div class="row">
     <div>
       <h3>
@@ -47,9 +47,12 @@
       {% endif %}
     </div>
     <div style="text-align:right">
-      <span class="chip {% if application.status in ('interview', 'offer') %}on{% endif %}">
+      <span class="chip {% if application.status in ('interview', 'offer', 'next_step') %}on{% endif %}">
         {{ application.status.replace("_", " ") }}
       </span>
+      {% if application.last_event == 'submitted' %}
+      <div class="meta" style="justify-content:flex-end">submitted</div>
+      {% endif %}
     </div>
   </div>
 
@@ -71,7 +74,7 @@
   {% endif %}
 
   <div class="actions">
-    {% for status in ["in_review", "assessment", "interview", "offer", "rejected", "withdrawn"] if status != application.status %}
+    {% for status in ["in_review", "next_step", "assessment", "interview", "offer", "rejected", "withdrawn"] if status != application.status %}
     <form method="post" action="/application/{{ application.id }}/status">
       <input type="hidden" name="status" value="{{ status }}">
       <input type="hidden" name="redirect" value="/applications?show={{ show }}">
