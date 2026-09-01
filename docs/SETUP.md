@@ -223,11 +223,10 @@ first use.
 
 ## Step 7 — GitHub Actions (the poller that runs without you)
 
-```powershell
-git add -A
-git commit -m "Inbox job agent"
-gh repo create inbox-job-agent --private --source . --push
-```
+**Paused for now** — the workflow has no schedule and the job is disabled, so GitHub will not
+poll or email you. Use `python -m app.run poll` locally instead.
+
+When you want this again:
 
 Repo → **Settings → Secrets and variables → Actions**:
 
@@ -241,8 +240,7 @@ Repo → **Settings → Secrets and variables → Actions**:
 
 Variables tab: `LLM_PROVIDER=gemini`, optionally `MIN_JOB_SCORE`, `GMAIL_QUERY`.
 
-**Verify:** Actions tab → **poll-inbox** → *Run workflow*. The log ends with a JSON summary
-(`processed`, `jobs_matched`, `categories`). After that it runs every 30 minutes on its own.
+**Verify:** Actions tab → **poll-inbox** is idle. No new emails from GitHub Actions.
 
 ---
 

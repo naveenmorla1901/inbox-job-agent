@@ -50,6 +50,10 @@ Nothing sensitive ships: `.gitignore` excludes `.env`, `secrets/`, `data/` and y
 
 ## 3. GitHub Actions poller
 
+**Paused.** The scheduled poller is turned off so failed runs stop emailing you. Poll on your
+machine with `python -m app.run poll`. To turn GitHub back on later: restore the `cron` in
+`.github/workflows/poll.yml`, remove `if: false` on the `poll` job, and push.
+
 Repo → **Settings → Secrets and variables → Actions → New repository secret**:
 
 | Secret | Value |
@@ -68,11 +72,7 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 Then under the **Variables** tab: `LLM_PROVIDER` = `gemini` (turns the chain on; every key
 you added is walked automatically), and optionally `MIN_JOB_SCORE` and `GMAIL_QUERY`.
 
-Run it once by hand: **Actions → poll-inbox → Run workflow**. The log ends with a JSON summary
-(`processed`, `jobs_matched`, `categories`). After that it runs itself every 15 minutes.
-
-> GitHub disables schedules on repos with no activity for 60 days. One commit, or one manual run,
-> re-arms it.
+Do not run it from Actions while it is paused. Poll locally instead.
 
 ---
 

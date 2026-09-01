@@ -1,10 +1,9 @@
 name: poll-inbox
 
-# Free tier: 2,000 min/month on private repos, unlimited on public ones. Actions bills a whole
-# minute per run, so every 30 min costs ~1,450 min/month and fits. Public repo? Use "*/15".
+# Paused: scheduled GitHub runs were failing and emailing. Poll locally instead:
+#   python -m app.run poll --days 1
+# To turn this back on, restore the cron below and run: gh workflow enable poll.yml
 on:
-  schedule:
-    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       max_messages:
@@ -18,6 +17,7 @@ concurrency:
 
 jobs:
   poll:
+    if: false  # hard stop until you want GitHub polling again
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
