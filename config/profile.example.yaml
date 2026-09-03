@@ -10,6 +10,8 @@ target_titles:
   - nlp engineer
   - llm engineer
   - data analyst
+  - data engineer
+  - software engineer
 
 # Softer signals: any of these tokens in a title earns partial title credit.
 title_keywords:
@@ -22,8 +24,17 @@ title_keywords:
   - analytics
   - scientist
 
-# Hard rejects on the title.
+# Hard rejects on the title. Word-boundary match, so "manager" will not
+# reject a "data management" title. Senior IC roles are kept.
 exclude_titles:
+  - director
+  - head of
+  - vice president
+  - vp
+  - evp
+  - svp
+  - executive
+  - manager
   - sales
   - account executive
   - recruiter
@@ -73,10 +84,22 @@ job_alert_senders:
   - jobs-listings@linkedin.com
   - alert@indeed.com
   - invitetoapply@indeed.com
+  - alerts@alerts.haystack.cv
+  - alerts@haystack.cv
   - noreply@glassdoor.com
   - jobalerts@ziprecruiter.com
   - alerts@dice.com
   - notifications@handshake.com
+  - noreply@adzuna.com
+  - jobalerts@adzuna.com
+  - alert@adzuna.com
+  - donotreply@monster.com
+  - jobs@monster.com
+  - noreply@monster.com
+  - no-reply@builtin.com
+  - alerts@builtin.com
+  - jobalerts@experteer.com
+  - mailer@appcast.io
 
 # Paste your resume as plain text. Used as a bag-of-words relevance signal.
 resume_text: |

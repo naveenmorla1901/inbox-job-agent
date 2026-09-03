@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     profile_path: str = "config/profile.yaml"
     profile_yaml: str = ""  # inline profile for hosts where you only have env vars
     min_job_score: float = 0.45
-    max_jobs_per_email: int = 25
+    max_jobs_per_email: int = 40
     scrape_job_pages: bool = True
     scrape_timeout: int = 15
 
@@ -37,10 +37,12 @@ class Settings(BaseSettings):
     llm_chain_classify: str = ""  # high volume, short prompts: use a small fast model
     llm_chain_extract: str = ""  # rare, long prompts: worth a stronger model
     llm_cooldown_seconds: int = 900  # how long to skip a provider after it rate limits
+    llm_gemini_gap_seconds: int = 8  # rest a Gemini key after a hit so the other account is used next
     llm_classify_body_chars: int = 4000
 
     llm_provider: str = "none"  # legacy single-provider setting, still honoured
     gemini_api_key: str = ""
+    gemini_api_key_2: str = ""  # second Google AI Studio account; rotated with gemini_api_key
     gemini_model: str = "gemini-2.0-flash"
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"

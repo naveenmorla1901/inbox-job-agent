@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from .config import Profile
+from .job_fields import VISA_REJECT_LABELS, visa_from_text
 
 TOKEN = re.compile(r"[a-z0-9+#./-]{2,}")
 # "5+ years of relevant experience", "3-5 yrs experience"
@@ -64,7 +65,10 @@ def score_title(profile: Profile, title: str) -> tuple[float, bool]:
     if not t:
         return 0.35, False
     for bad in profile.exclude_titles:
-        if bad.lower() in t:
+        term = bad.lower().strip()
+        if not term:
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", t):
             return 0.0, True
     for target in profile.target_titles:
         if target.lower() in t:
@@ -75,6 +79,19 @@ def score_title(profile: Profile, title: str) -> tuple[float, bool]:
     if hits == 1:
         return 0.5, False
     return 0.1, False
+
+
+STUDENT_TITLE = re.compile(r"\b(intern|internship|co-?op|student experience|apprentice)\b", re.I)
+
+
+def title_worth_scraping(profile: Profile, title: str) -> bool:
+    """Skip the job-page fetch when the email title is clearly not a target role."""
+    score, rejected = score_title(profile, title)
+    if rejected or score < 0.5:
+        return False
+    if STUDENT_TITLE.search(title or "") and score < 1.0:
+        return False
+    return True
 
 
 def score_skills(profile: Profile, text: str) -> tuple[float, list[str], list[str]]:
@@ -120,6 +137,10 @@ def match_job(
     for bad in profile.exclude_keywords:
         if bad.lower() in lowered:
             return MatchResult(verdict=f"rejected: contains '{bad}'", rejected=True)
+
+    visa = visa_from_text(text)
+    if visa in VISA_REJECT_LABELS:
+        return MatchResult(verdict=f"rejected: {visa.lower()}", rejected=True)
 
     title_score, title_rejected = score_title(profile, title)
     if title_rejected:

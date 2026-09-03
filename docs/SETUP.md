@@ -119,7 +119,8 @@ that rate-limits is skipped for 15 minutes and the next one answers.
 | Provider | Where to get a key | `.env` name |
 | --- | --- | --- |
 | Groq (fast, first for triage) | <https://console.groq.com/keys> | `GROQ_API_KEY` |
-| Gemini | <https://aistudio.google.com/apikey> | `GEMINI_API_KEY` |
+| Gemini (account 1) | <https://aistudio.google.com/apikey> | `GEMINI_API_KEY` |
+| Gemini (account 2) | a second AI Studio key, different Google account | `GEMINI_API_KEY_2` |
 | NVIDIA NIM | <https://build.nvidia.com> → any Llama 3.3 endpoint → Generate API key | `NVIDIA_API_KEY` |
 | DeepSeek | <https://platform.deepseek.com/api_keys> | `DEEPSEEK_API_KEY` |
 | OpenRouter (free models) | <https://openrouter.ai/keys> | `OPENROUTER_API_KEY` |
@@ -132,8 +133,17 @@ LLM_PROVIDER=gemini
 
 That value only means "LLMs are on". The walk order is independent of it:
 
-- **classify** (every ambiguous email, short prompt): groq → gemini → nvidia → deepseek → openrouter
-- **extract** (rare, a blocked job page): nvidia → deepseek → gemini → groq → openrouter
+- **classify** (every ambiguous email, short prompt): groq → gemini → gemini2 → nvidia → deepseek → openrouter
+- **extract** (rare, a blocked job page): nvidia → deepseek → gemini → gemini2 → groq → openrouter
+
+Two Gemini keys alternate. After a successful call, that key rests `LLM_GEMINI_GAP_SECONDS` (default 8) so the other account takes the next request. A 429 parks only the key that hit the quota.
+
+To pin Gemini first (both accounts, then Groq as backup):
+
+```ini
+LLM_CHAIN_CLASSIFY=gemini,gemini2,groq
+LLM_CHAIN_EXTRACT=gemini,gemini2,groq,nvidia,openrouter
+```
 
 To pin a cheaper classify model and keep a stronger one for extracts:
 

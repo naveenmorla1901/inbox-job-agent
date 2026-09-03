@@ -8,9 +8,19 @@
       <div class="meta">
         <span>{{ job.company }}</span>
         {% if job.location %}<span>· {{ job.location }}</span>{% endif %}
-        <span>· {{ job.source }}</span>
-        <span>· {{ job.received_at.strftime("%b %d, %Y") }}</span>
+        {% if job.state %}<span>· {{ job.state }}</span>{% endif %}
+        <span>· {{ job.source }}{% if job.source_type %} / {{ job.source_type.replace("_", " ") }}{% endif %}</span>
+        <span>· email {{ job.received_at | et("%b %d, %Y") }}</span>
+        {% if job.posted_at %}<span>· posted {{ job.posted_at }}</span>{% endif %}
         <span>· status: {{ job.status }}</span>
+        <span>· scrape: {{ job.scrape_status or "?" }}{% if job.extraction %} via {{ job.extraction }}{% endif %}</span>
+      </div>
+      <div class="chips">
+        {% if job.employment_type %}<span class="chip">{{ job.employment_type }}</span>{% endif %}
+        {% if job.salary %}<span class="chip on">{{ job.salary }}</span>{% endif %}
+        {% if job.visa_sponsorship %}<span class="chip">{{ job.visa_sponsorship }}</span>{% endif %}
+        {% if job.experience_required %}<span class="chip">{{ job.experience_required }}</span>{% endif %}
+        {% if job.posting_id %}<span class="chip">id {{ job.posting_id }}</span>{% endif %}
       </div>
       <div class="meta">
         <a href="{{ job.url }}" target="_blank" rel="noopener" class="joblink">{{ job.url }}</a>
@@ -35,6 +45,16 @@
     {% endfor %}
   </div>
 </div>
+
+{% if job.required_skills %}
+<div class="card">
+  <h3>Skills on the posting</h3>
+  <div class="chips">
+    {% for skill in (job.required_skills or "").split(", ") if skill %}
+    <span class="chip">{{ skill }}</span>{% endfor %}
+  </div>
+</div>
+{% endif %}
 
 <div class="card">
   <h3>Matched skills</h3>

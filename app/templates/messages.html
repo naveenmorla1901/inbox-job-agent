@@ -1,23 +1,48 @@
 {% extends "base.html" %}
 {% block title %}Mail log — Inbox Job Agent{% endblock %}
 {% block content %}
+<form class="filters" method="get" action="/messages">
+  <select name="category">
+    <option value="" {% if not category %}selected{% endif %}>all categories</option>
+    {% for option in ["job_alert", "recruiter_outreach", "interview_invite", "assessment", "next_step", "offer", "rejection", "application_update", "other"] %}
+    <option value="{{ option }}" {% if category == option %}selected{% endif %}>{{ option.replace("_", " ") }}</option>
+    {% endfor %}
+  </select>
+  <select name="email_type">
+    <option value="" {% if not email_type %}selected{% endif %}>any unclassified type</option>
+    {% for option in ["unclassified", "webinar", "newsletter", "security"] %}
+    <option value="{{ option }}" {% if email_type == option %}selected{% endif %}>{{ option }}</option>
+    {% endfor %}
+  </select>
+  <select name="days">
+    {% for option in [1, 2, 3, 7, 14, 30, 90] %}
+    <option value="{{ option }}" {% if days == option %}selected{% endif %}>{{ option }}d</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+</form>
+
 <table>
   <tr>
-    <th>Received</th><th>From</th><th>Subject</th><th>Category</th><th>Conf</th><th>Jobs</th>
+    <th>Received</th><th>From</th><th>Subject</th><th>Category</th><th>Why</th><th>Conf</th><th>Jobs</th>
   </tr>
   {% for message in messages %}
   <tr>
-    <td>{{ message.received_at.strftime("%b %d %H:%M") }}</td>
+    <td>{{ message.received_at | et("%b %d %I:%M %p ET") }}</td>
     <td title="{{ message.sender_email }}">{{ message.sender[:28] }}</td>
     <td>
       <a href="https://mail.google.com/mail/u/0/#inbox/{{ message.id }}" target="_blank" rel="noopener">
         {{ message.subject[:70] or "(no subject)" }}</a>
     </td>
-    <td><span class="chip">{{ message.category.replace("_", " ") }}</span></td>
+    <td>
+      <span class="chip">{{ message.category.replace("_", " ") }}</span>
+      {% if message.email_type %}<span class="chip">{{ message.email_type }}</span>{% endif %}
+    </td>
+    <td class="meta">{{ message.reason[:40] }}</td>
     <td>{{ "%.2f"|format(message.confidence) }}</td>
     <td>{{ message.jobs_matched }}/{{ message.jobs_found }}</td>
   </tr>
   {% endfor %}
 </table>
-{% if not messages %}<p class="empty">No mail processed yet.</p>{% endif %}
+{% if not messages %}<p class="empty">No mail in this filter.</p>{% endif %}
 {% endblock %}

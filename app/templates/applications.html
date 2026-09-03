@@ -37,8 +37,8 @@
       </h3>
       <div class="meta">
         <span>{{ application.company }}</span>
-        <span>· applied {{ application.applied_at.strftime("%b %d") }}</span>
-        <span>· last update {{ application.last_event_at.strftime("%b %d") }}</span>
+        <span>· applied {{ application.applied_at | et("%b %d") }}</span>
+        <span>· last update {{ application.last_event_at | et("%b %d") }}</span>
         {% if application.source %}<span>· {{ application.source }}</span>{% endif %}
         {% if application.id in stale %}<span style="color: var(--warn)">· silent 14+ days</span>{% endif %}
       </div>
@@ -66,7 +66,7 @@
   <table style="margin-top:10px">
     {% for event in timeline[:6] %}
     <tr>
-      <td style="width:90px">{{ event.occurred_at.strftime("%b %d") }}</td>
+      <td style="width:90px">{{ event.occurred_at | et("%b %d") }}</td>
       <td style="width:150px"><span class="chip">{{ event.kind.replace("_", " ") }}</span></td>
       <td>
         {% if event.gmail_link %}

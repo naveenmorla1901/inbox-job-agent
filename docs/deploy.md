@@ -1,15 +1,15 @@
-# Deploy for free: GitHub Actions + Hugging Face Spaces + Neon
-
-Three services, no credit card, nothing expires:
+# Deploy: Google Cloud Run + Neon
 
 | Piece | Service | What it does |
 | --- | --- | --- |
-| Poller | GitHub Actions | Reads new mail every 15 minutes |
-| Database | Neon Postgres | Keeps jobs and outreach forever |
-| Dashboard | Hugging Face Spaces | Always-on web UI |
-| Alerts | Telegram | Pings you for recruiters and interviews |
+| Dashboard | **Google Cloud Run** | Docker container, public URL, login with `API_TOKEN` |
+| Poller | Cloud Scheduler → `POST /api/run` | Reads Gmail every 30 minutes |
+| Database | Neon Postgres | Keeps jobs and applications |
+| Alerts | Telegram (optional) | Pings you for recruiters and interviews |
 
-Do them in this order — the database URL is needed by the other two.
+GitHub Actions is paused. Hugging Face Docker Spaces are paid now — skip them.
+
+Do them in this order — the database URL is needed by Cloud Run.
 
 ---
 
@@ -76,63 +76,133 @@ Do not run it from Actions while it is paused. Poll locally instead.
 
 ---
 
-## 4. Hugging Face Space (dashboard)
+## 4. Google Cloud Run (dashboard + optional poll)
 
-1. <https://huggingface.co/new-space> → name it, **Docker** SDK, **Blank** template, public or
-   private, free CPU hardware.
-2. Push this repo to the Space remote:
+This is the simple Docker path. One container serves the website. Cloud Scheduler hits
+`POST /api/run` every 30 minutes so Gmail is polled without GitHub Actions.
 
-```powershell
-git remote add space https://huggingface.co/spaces/<your-username>/<space-name>
-copy deploy\huggingface\README.md README-space.md   # Spaces need YAML front matter in README.md
-```
+You already have a Google Cloud project (`inbox-job-agent`) from Gmail OAuth. Use that.
 
-The simplest path: copy `deploy/huggingface/README.md` over `README.md` **on the Space branch
-only**, so the project README stays intact on GitHub:
+### 4a. One-time Google Cloud setup
+
+1. Install the Google Cloud SDK: <https://cloud.google.com/sdk/docs/install>
+2. In PowerShell:
 
 ```powershell
-git checkout -b space
-copy /Y deploy\huggingface\README.md README.md
-git commit -am "Space config"
-git push space space:main
-git checkout main
+gcloud auth login
+gcloud config set project inbox-job-agent
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com
 ```
 
-3. Space → **Settings → Variables and secrets**, add:
+If `gcloud config get-value project` prints a different id, use that id in every command below.
 
-| Name | Kind | Value |
+### 4b. Put secrets in Secret Manager (do this on your laptop)
+
+These files must not go in the Docker image. Cloud Run reads them as environment variables.
+
+```powershell
+cd C:\projects\inbox-job-agent
+
+gcloud secrets create gmail-token --data-file=secrets\token.json
+gcloud secrets create profile-yaml --data-file=config\profile.yaml
+```
+
+If a secret already exists, update it instead of creating:
+
+```powershell
+gcloud secrets versions add gmail-token --data-file=secrets\token.json
+gcloud secrets versions add profile-yaml --data-file=config\profile.yaml
+```
+
+### 4c. Deploy the container
+
+Pick a long dashboard password first (this is `API_TOKEN`). Then, still in the project folder:
+
+```powershell
+gcloud run deploy inbox-job-agent `
+  --source . `
+  --region us-east1 `
+  --allow-unauthenticated `
+  --timeout 900 `
+  --memory 1Gi `
+  --cpu 1 `
+  --max-instances 1 `
+  --set-env-vars "LLM_PROVIDER=gemini,GMAIL_QUERY=in:inbox -category:promotions,MIN_JOB_SCORE=0.45,API_TOKEN=pick-a-long-random-string" `
+  --set-secrets "GMAIL_TOKEN_JSON=gmail-token:latest,PROFILE_YAML=profile-yaml:latest"
+```
+
+`--source .` builds the existing `Dockerfile` in Cloud Build. You do not push an image yourself.
+
+When it finishes it prints a URL like:
+
+`https://inbox-job-agent-xxxxx-ue.a.run.app`
+
+Open that, enter `API_TOKEN` on the login page. That is your hosted dashboard.
+
+### 4d. Add the remaining env vars in the console
+
+Cloud Run → **inbox-job-agent** → **Edit & deploy new revision** → **Variables & secrets**:
+
+| Name | Type | Value |
 | --- | --- | --- |
-| `GMAIL_TOKEN_JSON` | secret | contents of `secrets/token.json` |
-| `PROFILE_YAML` | secret | contents of `config/profile.yaml` |
-| `DATABASE_URL` | secret | Neon string |
-| `API_TOKEN` | secret | a long random string — this is your dashboard password |
-| `GEMINI_API_KEY` | secret | your Gemini key |
-| `GROQ_API_KEY` | secret | your Groq key |
-| `NVIDIA_API_KEY` | secret | optional |
-| `DEEPSEEK_API_KEY` | secret | optional |
-| `OPENROUTER_API_KEY` | secret | optional |
-| `LLM_PROVIDER` | variable | `gemini` (turns failover on) |
+| `DATABASE_URL` | env var | your Neon URL starting with `postgresql+psycopg://` |
+| `GEMINI_API_KEY` | env var | from `.env` |
+| `GROQ_API_KEY` | env var | from `.env` |
+| `NVIDIA_API_KEY` | env var | optional |
+| `DEEPSEEK_API_KEY` | env var | optional |
+| `OPENROUTER_API_KEY` | env var | optional |
 
-4. Open the Space URL, enter the `API_TOKEN` at the login prompt. Same data the Actions poller
-   writes, because both point at the same Neon database.
+`GMAIL_TOKEN_JSON` and `PROFILE_YAML` should already be listed as secrets from step 4c.
 
-The Space only serves the dashboard; polling stays on Actions. If you would rather have the Space
-poll too, add `POLL_IN_APP=1`-style scheduling later, or just hit **POST /api/run** from the Space
-with your `API_TOKEN`.
+Deploy the revision.
 
----
+### 4e. Poll on a schedule (replaces GitHub Actions)
 
-## 5. Verify end to end
+Cloud Scheduler → **Create job**:
 
-```bash
-curl -H "x-api-token: <API_TOKEN>" https://<your-space>.hf.space/api/breakdown?days=1
+| Field | Value |
+| --- | --- |
+| Name | `inbox-job-agent-poll` |
+| Region | `us-east1` |
+| Frequency | `*/30 * * * *` |
+| Timezone | your local zone |
+| Target type | HTTP |
+| URL | `https://inbox-job-agent-xxxxx-ue.a.run.app/api/run` |
+| HTTP method | POST |
+| Auth header | add header `x-api-token` = the same `API_TOKEN` |
+
+Timeout on the job: 15 minutes if the UI offers it.
+
+Or from the CLI (replace the URL and token):
+
+```powershell
+gcloud scheduler jobs create http inbox-job-agent-poll `
+  --location us-east1 `
+  --schedule "*/30 * * * *" `
+  --uri "https://inbox-job-agent-xxxxx-ue.a.run.app/api/run" `
+  --http-method POST `
+  --headers "x-api-token=YOUR_API_TOKEN" `
+  --attempt-deadline 900s
 ```
 
-Should return category counts identical to what the Actions log printed.
+### 4f. If the service account cannot read secrets
+
+First deploy can fail with a permission error on Secret Manager. Grant access (the number is
+your project number, from the Cloud Console home page):
+
+```powershell
+gcloud secrets add-iam-policy-binding gmail-token --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+gcloud secrets add-iam-policy-binding profile-yaml --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+```
+
+Then deploy again.
+
+## 5. Hugging Face (skip)
+
+Docker Spaces are paid now. This app needs Docker. Use Cloud Run instead.
 
 ## Costs
 
-Zero. Neon free tier: 0.5 GB storage, scales to zero. Actions: ~4 min/hour on a private repo
-(~2,900 min/month) — if you are close to the 2,000 min limit, change the cron to `*/30` or make the
-repo public, where Actions minutes are unlimited. Spaces free CPU: always on. Gemini free tier
-covers far more emails than a personal inbox produces.
+Cloud Run idle with max-instances 1 and min-instances 0 is inside the free tier for a personal
+dashboard. Cloud Scheduler’s first few jobs are free. Neon stays free. You pay only if the
+container is busy for many hours or you raise memory a lot.

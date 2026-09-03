@@ -30,6 +30,7 @@ class Message(SQLModel, table=True):
     summary: str = Field(default="", sa_column=Column(Text))
     jobs_found: int = 0
     jobs_matched: int = 0
+    email_type: str = ""  # webinar | newsletter | security | unclassified (for category=other)
     processed_at: datetime = Field(default_factory=utcnow)
 
 
@@ -44,6 +45,15 @@ class Job(SQLModel, table=True):
     company: str = Field(default="", index=True)
     location: str = ""
     source: str = ""
+    source_type: str = ""  # job_board | official_career_site
+    posting_id: str = ""  # id pulled from the URL / listing page
+    posted_at: str = ""  # YYYY-MM-DD from the listing when available
+    state: str = ""  # two-letter code or Remote
+    employment_type: str = ""
+    salary: str = ""
+    visa_sponsorship: str = ""
+    experience_required: str = ""
+    required_skills: str = Field(default="", sa_column=Column(Text))
     description: str = Field(default="", sa_column=Column(Text))
     score: float = Field(default=0.0, index=True)
     title_score: float = 0.0
@@ -72,8 +82,14 @@ class Outreach(SQLModel, table=True):
     kind: str = Field(default="recruiter_outreach", index=True)
     person: str = ""
     person_email: str = ""
+    person_phone: str = ""
     company: str = ""
     role: str = ""
+    location: str = ""
+    state: str = ""
+    employment_type: str = ""
+    experience_required: str = ""
+    scheduling_url: str = Field(default="", sa_column=Column(Text))
     subject: str = ""
     summary: str = Field(default="", sa_column=Column(Text))
     action_required: str = ""

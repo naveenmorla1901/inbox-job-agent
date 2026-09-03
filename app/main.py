@@ -7,15 +7,14 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlmodel import Session, col, func, select
+from sqlmodel import Session, and_, col, func, select
 
 from .applications import CLOSED_STATUSES, STATUS_RANK, create_from_job, stale_applications
 from .classify import FOLLOW_UP_KINDS, NOREPLY_RE
 from .config import ROOT, get_profile, get_settings
 from .db import get_engine, init_db
 from .models import Application, ApplicationEvent, Job, Message, Outreach
-from .pipeline import run_once
-from .reporting import build_breakdown
+from .timefmt import fmt_et, parse_et_datetime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 # httpx logs full request URLs at INFO, which would print API keys carried in query strings.
@@ -30,6 +29,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Inbox Job Agent", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
 templates = Jinja2Templates(directory=str(ROOT / "app" / "templates"))
+templates.env.filters["et"] = fmt_et
 
 PUBLIC_PATHS = {"/healthz", "/login", "/favicon.ico"}
 COOKIE = "ija_key"
@@ -150,16 +150,29 @@ def jobs_page(
 
 
 @app.get("/overview", response_class=HTMLResponse)
-def overview_page(request: Request, session: Session = Depends(db_session), days: int = 1):
-    report = build_breakdown(session, days=days)
+def overview_page(
+    request: Request,
+    session: Session = Depends(db_session),
+    days: int = 1,
+    since: str = "",
+    until: str = "",
+):
+    report = build_breakdown(session, days=days, since=since or None, until=until or None)
     return templates.TemplateResponse(
-        request, "overview.html", {"report": report, "days": days}
+        request,
+        "overview.html",
+        {"report": report, "days": days, "since": since, "until": until},
     )
 
 
 @app.get("/api/breakdown")
-def api_breakdown(session: Session = Depends(db_session), days: int = 1) -> dict:
-    return build_breakdown(session, days=days).as_dict()
+def api_breakdown(
+    session: Session = Depends(db_session),
+    days: int = 1,
+    since: str = "",
+    until: str = "",
+) -> dict:
+    return build_breakdown(session, days=days, since=since or None, until=until or None).as_dict()
 
 
 @app.get("/job/{job_id}", response_class=HTMLResponse)
@@ -312,12 +325,95 @@ def mark_handled(
     return RedirectResponse(redirect, status_code=303)
 
 
-@app.get("/messages", response_class=HTMLResponse)
-def messages_page(request: Request, session: Session = Depends(db_session), limit: int = 100):
+@app.get("/preview", response_class=HTMLResponse)
+def preview_page(
+    request: Request,
+    session: Session = Depends(db_session),
+    hours: int = 1,
+    start: str = "",
+    end: str = "",
+):
+    """Temporary extract review. Remove once you trust the pipeline."""
+    hours = max(1, min(hours, 48))
+    start_at = parse_et_datetime(start)
+    end_at = parse_et_datetime(end)
+    if start_at and end_at and end_at > start_at:
+        since, until = start_at, end_at
+        mail_filter = and_(Message.received_at >= since, Message.received_at < until)
+        job_filter = and_(Job.received_at >= since, Job.received_at < until)
+        outreach_filter = and_(Outreach.received_at >= since, Outreach.received_at < until)
+    else:
+        until = None
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        mail_filter = Message.received_at >= since
+        job_filter = Job.received_at >= since
+        outreach_filter = Outreach.received_at >= since
+
     messages = session.exec(
-        select(Message).order_by(col(Message.received_at).desc()).limit(limit)
+        select(Message).where(mail_filter).order_by(col(Message.received_at).desc())
     ).all()
-    return templates.TemplateResponse(request, "messages.html", {"messages": messages})
+    jobs = session.exec(select(Job).where(job_filter).order_by(col(Job.score).desc())).all()
+    outreach = session.exec(
+        select(Outreach).where(outreach_filter).order_by(col(Outreach.received_at).desc())
+    ).all()
+    jobs_by_mail: dict[str, list[Job]] = {}
+    for job in jobs:
+        jobs_by_mail.setdefault(job.message_id, []).append(job)
+    outreach_by_mail = {item.message_id: item for item in outreach}
+    categories: dict[str, int] = {}
+    for message in messages:
+        categories[message.category] = categories.get(message.category, 0) + 1
+    scrape: dict[str, int] = {}
+    for job in jobs:
+        scrape[job.scrape_status or "unknown"] = scrape.get(job.scrape_status or "unknown", 0) + 1
+    return templates.TemplateResponse(
+        request,
+        "preview.html",
+        {
+            "hours": hours,
+            "since": since,
+            "until": until,
+            "start": start,
+            "end": end,
+            "messages": messages,
+            "jobs": jobs,
+            "outreach": outreach,
+            "jobs_by_mail": jobs_by_mail,
+            "outreach_by_mail": outreach_by_mail,
+            "categories": categories,
+            "scrape": scrape,
+            "matched": sum(1 for job in jobs if job.matched),
+            "ignored": sum(1 for job in jobs if not job.matched),
+        },
+    )
+
+
+@app.get("/messages", response_class=HTMLResponse)
+def messages_page(
+    request: Request,
+    session: Session = Depends(db_session),
+    limit: int = 100,
+    category: str = "",
+    email_type: str = "",
+    days: int = 30,
+):
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = select(Message).where(Message.received_at >= since)
+    if category:
+        stmt = stmt.where(Message.category == category)
+    if email_type:
+        stmt = stmt.where(Message.email_type == email_type)
+    messages = session.exec(stmt.order_by(col(Message.received_at).desc()).limit(limit)).all()
+    return templates.TemplateResponse(
+        request,
+        "messages.html",
+        {
+            "messages": messages,
+            "category": category,
+            "email_type": email_type,
+            "days": days,
+        },
+    )
 
 
 @app.get("/api/jobs")

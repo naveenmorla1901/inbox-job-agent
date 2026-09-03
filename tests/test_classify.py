@@ -6,6 +6,7 @@ from app.classify import (
     OTHER,
     RECRUITER,
     REJECTION,
+    classify_email,
     classify_rules,
 )
 from app.config import get_profile
@@ -135,3 +136,52 @@ def test_marketing_is_ignored():
         PROFILE,
     )
     assert result.category == OTHER
+
+
+def test_linkedin_application_sent_is_not_a_job_alert():
+    result = classify_rules(
+        email(
+            "jobs-noreply@linkedin.com",
+            "Naveen, your application was sent to Buzz Solutions",
+            "Your application was sent to Buzz Solutions. Similar jobs for you below.",
+        ),
+        PROFILE,
+        job_count=4,
+    )
+    assert result.category == "application_update"
+    assert not result.is_follow_up
+
+
+def test_other_mail_gets_a_subtype():
+    result = classify_email(
+        email("news@medium.com", "Your weekly newsletter", "Top stories this week. Unsubscribe from all."),
+        PROFILE,
+        llm=None,
+    )
+    assert result.category == OTHER
+    assert result.email_type == "newsletter"
+
+
+def test_workday_career_alerts_are_job_alerts():
+    nelnet = classify_rules(
+        email(
+            "nelnet@myworkday.com",
+            "Good News: A Nelnet Job Match Has Arrived",
+            "Take the first step and check out the jobs below.",
+            name="Nelnet Talent Acquisition",
+        ),
+        PROFILE,
+        job_count=2,
+    )
+    assert nelnet.category == JOB_ALERT
+    td = classify_rules(
+        email(
+            "TD@myworkday.com",
+            "TD Career Alerts: Potential roles for you",
+            "Please review the jobs below to see if they're a fit for you.",
+            name="TD",
+        ),
+        PROFILE,
+        job_count=5,
+    )
+    assert td.category == JOB_ALERT

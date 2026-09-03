@@ -7,11 +7,14 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from html import unescape as html_unescape
 
+from urllib.parse import urljoin
+
 import httpx
 from bs4 import BeautifulSoup
 
 from .email_parse import clean_text, html_to_text
 from .extract_jobs import JobCandidate, unwrap_url
+from .job_fields import PostingFields, enrich_fields, fields_from_jsonld, normalize_visa
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +51,27 @@ FORM_NOISE = re.compile(
 BLOCKED_NOISE = re.compile(
     r"(captcha|unusual traffic|are you a human|access denied|request blocked|"
     r"enable javascript to|cloudflare|please verify you are|sign in to continue|"
-    r"401 unauthorized|403 forbidden)",
+    r"401 unauthorized|403 forbidden|sign in with (apple|a passkey|google)|"
+    r"new to linkedin|join now|get hired without the hassle|"
+    r"your activity and behavior on this site made us think that you are a bot|"
+    r"radware captcha)",
+    re.I,
+)
+INTERSTITIAL_NOISE = re.compile(
+    r"(you are now being redirected|if you are not redirected within|"
+    r"this website uses (only essential )?cookies|"
+    r"by continuing to browse this website|"
+    r'"widget"\s*:\s*"redirect")',
+    re.I,
+)
+NAV_CHROME = re.compile(
+    r"skip to (?:main )?content.{0,400}(language|čeština|deutsch \(|select language)",
+    re.I | re.S,
+)
+SHELL_TITLE = re.compile(
+    r"(get hired without the hassle|^haystack\b|sign in to (continue|linkedin)|"
+    r"page not found|access denied|adzuna jobs search|^adzuna$|"
+    r"radware captcha|cookie (policy|consent|settings))",
     re.I,
 )
 
@@ -57,7 +80,11 @@ LLM_EXTRACT_PROMPT = """Extract the job posting from this page text.
 
 Return JSON:
 {{"title": "", "company": "", "location": "", "description": "the responsibilities, requirements
-and skills, plain text, up to 2000 characters", "is_job_posting": true|false}}
+and skills, plain text, up to 4000 characters", "is_job_posting": true|false,
+ "posted_at": "YYYY-MM-DD or empty", "employment_type": "", "salary": "",
+ "visa_sponsorship": "exactly one of: '' | No sponsorship | US citizen / GC only | H-1B sponsorship | OPT/CPT mentioned | Clearance required",
+ "experience_required": "", "required_skills": "comma list",
+ "state": "two-letter US state or Remote"}}
 
 If the page is a login wall, search page, or anything other than a single job posting,
 set is_job_posting to false.
@@ -73,6 +100,15 @@ class ScrapedJob:
     company: str = ""
     location: str = ""
     description: str = ""
+    posted_at: str = ""
+    employment_type: str = ""
+    salary: str = ""
+    visa_sponsorship: str = ""
+    experience_required: str = ""
+    required_skills: str = ""
+    state: str = ""
+    posting_id: str = ""
+    source_type: str = ""
     ok: bool = False
     final_url: str = ""
     status: str = "empty"  # ok | blocked | empty | error | skipped
@@ -80,6 +116,19 @@ class ScrapedJob:
 
     def is_thin(self) -> bool:
         return len(self.description) < 250
+
+    def apply_fields(self, fields: PostingFields) -> None:
+        self.posted_at = self.posted_at or fields.posted_at
+        self.employment_type = self.employment_type or fields.employment_type
+        self.salary = self.salary or fields.salary
+        self.visa_sponsorship = normalize_visa(
+            self.visa_sponsorship or fields.visa_sponsorship, self.description
+        )
+        self.experience_required = self.experience_required or fields.experience_required
+        self.required_skills = self.required_skills or fields.required_skills
+        self.state = self.state or fields.state
+        self.posting_id = self.posting_id or fields.posting_id
+        self.source_type = self.source_type or fields.source_type
 
 
 def _jsonld_blocks(soup: BeautifulSoup):
@@ -116,16 +165,74 @@ def _from_jsonld(soup: BeautifulSoup) -> ScrapedJob | None:
         )
         if item.get("jobLocationType") == "TELECOMMUTE":
             location = (location + " (Remote)").strip()
+        extras = fields_from_jsonld(item)
         return ScrapedJob(
             title=clean_text(str(item.get("title", "")))[:200],
             company=clean_text(str(company))[:150],
             location=clean_text(location)[:150],
             description=html_to_text(html_unescape(str(item.get("description", ""))))[:20000],
+            posted_at=extras.posted_at,
+            employment_type=extras.employment_type,
+            salary=extras.salary,
             ok=True,
             status="ok",
             extraction="jsonld",
         )
     return None
+
+
+def page_is_interstitial(title: str, body: str) -> bool:
+    """True when the fetched page is a cookie wall, redirect stub, or site chrome."""
+    blob = f"{title}\n{body[:4000]}"
+    if INTERSTITIAL_NOISE.search(blob):
+        return True
+    if NAV_CHROME.search(body[:1200]) and not re.search(
+        r"\b(responsibilities|requirements|qualifications|what you.ll do)\b",
+        body,
+        re.I,
+    ):
+        return True
+    stripped = (body or "").strip()
+    if stripped.startswith("{") and '"widget"' in stripped[:120] and "redirect" in stripped[:200]:
+        return True
+    return False
+
+
+def _redirected_company(body: str) -> str:
+    match = re.search(r"you are now being redirected to\s+([^\n.<]+)", body or "", re.I)
+    if not match:
+        return ""
+    return clean_text(match.group(1))[:150]
+
+
+def interstitial_destination(text: str, base_url: str) -> str:
+    """Follow Workday widget JSON and Adzuna 'click here if not redirected' targets once."""
+    raw = (text or "").strip()
+    if raw.startswith("{") and "widget" in raw[:80]:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict) and str(data.get("widget", "")).lower() == "redirect":
+            dest = str(data.get("url") or "").strip()
+            if dest:
+                return urljoin(base_url, dest)
+
+    match = re.search(
+        r"if you are not redirected[^<]{0,120}<a[^>]+href=[\"'](https?://[^\"']+|/[^\s\"']+)[\"']",
+        text or "",
+        re.I | re.S,
+    )
+    if match:
+        return urljoin(base_url, match.group(1))
+    match = re.search(
+        r'<meta[^>]+http-equiv=["\']refresh["\'][^>]+content=["\'][^"\']*url=([^"\']+)',
+        text or "",
+        re.I,
+    )
+    if match:
+        return urljoin(base_url, match.group(1).strip())
+    return ""
 
 
 def _from_html(soup: BeautifulSoup) -> ScrapedJob:
@@ -144,6 +251,14 @@ def _from_html(soup: BeautifulSoup) -> ScrapedJob:
     title = meta("og:title") or clean_text(soup.title.get_text() if soup.title else "")
 
     blocked = bool(BLOCKED_NOISE.search(body[:2000])) and len(body) < 1500
+    if SHELL_TITLE.search(title) or page_is_interstitial(title, body):
+        company = _redirected_company(body)
+        return ScrapedJob(
+            status="empty",
+            extraction="html",
+            title="",
+            company=company[:150],
+        )
     usable = bool(body.strip()) and not FORM_NOISE.search(body[:1500]) and not blocked
     return ScrapedJob(
         title=title[:200],
@@ -180,11 +295,17 @@ def _from_linkedin(soup: BeautifulSoup) -> ScrapedJob | None:
     if criteria:
         description += "\n\n" + "\n".join(criteria)
 
+    employment = ""
+    for line in criteria:
+        if "employment" in line.lower():
+            employment = line.split(":", 1)[-1].replace("Employment type", "").strip()[:40]
+
     return ScrapedJob(
         title=pick("h1.top-card-layout__title", "h2.top-card-layout__title", ".topcard__title")[:200],
         company=pick("a.topcard__org-name-link", ".topcard__org-name-link")[:150],
         location=pick(".topcard__flavor--bullet", ".top-card-layout__second-subline span")[:150],
         description=description[:20000],
+        employment_type=employment,
         ok=bool(description.strip()),
         status="ok" if description.strip() else "empty",
         extraction="linkedin",
@@ -194,11 +315,13 @@ def _from_linkedin(soup: BeautifulSoup) -> ScrapedJob | None:
 def _from_greenhouse(data: dict) -> ScrapedJob:
     location = (data.get("location") or {}).get("name", "")
     content = html_unescape(str(data.get("content", "")))
+    posted = str(data.get("updated_at") or data.get("first_published") or "")[:10]
     return ScrapedJob(
         title=clean_text(str(data.get("title", "")))[:200],
         company=clean_text(str(data.get("company_name", "")))[:150],
         location=clean_text(location)[:150],
         description=html_to_text(content)[:20000],
+        posted_at=posted if re.match(r"20\d{2}-\d{2}-\d{2}", posted) else "",
         ok=bool(content.strip()),
         status="ok" if content.strip() else "empty",
         extraction="greenhouse",
@@ -216,6 +339,10 @@ def _from_lever(data: dict) -> ScrapedJob:
         company=clean_text(str(categories.get("team", "")))[:150],
         location=clean_text(str(categories.get("location", "")))[:150],
         description=clean_text(body)[:20000],
+        employment_type=clean_text(str(categories.get("commitment", "")))[:40],
+        posted_at=str(data.get("createdAt") or "")[:10]
+        if str(data.get("createdAt") or "").startswith("20")
+        else "",
         ok=bool(body.strip()),
         status="ok" if body.strip() else "empty",
         extraction="lever",
@@ -276,6 +403,12 @@ def fetch_job(candidate: JobCandidate, timeout: int = 15) -> ScrapedJob:
                 status = "blocked" if resp.status_code in (401, 403, 429, 451, 999) else "empty"
                 return ScrapedJob(status=status, final_url=str(resp.url))
 
+        hop = interstitial_destination(resp.text, str(resp.url))
+        if hop and hop.split("?", 1)[0] != str(resp.url).split("?", 1)[0]:
+            nxt = _get(client, hop, HEADERS)
+            if nxt is not None and nxt.status_code < 400 and nxt.text.strip():
+                resp, kind = nxt, "html"
+
         try:
             if kind == "greenhouse":
                 job = _from_greenhouse(resp.json())
@@ -306,6 +439,7 @@ def fetch_job(candidate: JobCandidate, timeout: int = 15) -> ScrapedJob:
         if job.ok and job.is_thin():
             job.ok = len(job.description) > 40
             job.status = "ok" if job.ok else "empty"
+        _fill_listing_fields(job, candidate)
         return job
 
 
@@ -323,15 +457,49 @@ def llm_extract(page_text: str, llm, candidate: JobCandidate) -> ScrapedJob | No
     description = str(data.get("description", ""))
     if len(description) < 80:
         return None
-    return ScrapedJob(
+    job = ScrapedJob(
         title=str(data.get("title", "") or candidate.title)[:200],
         company=str(data.get("company", "") or candidate.company)[:150],
         location=str(data.get("location", "") or candidate.location)[:150],
         description=description[:20000],
+        posted_at=str(data.get("posted_at", ""))[:10],
+        employment_type=str(data.get("employment_type", ""))[:40],
+        salary=str(data.get("salary", ""))[:80],
+        visa_sponsorship=normalize_visa(str(data.get("visa_sponsorship", "")), description)[:80],
+        experience_required=str(data.get("experience_required", ""))[:80],
+        required_skills=str(data.get("required_skills", ""))[:400],
+        state=str(data.get("state", ""))[:20],
         ok=True,
         status="ok",
         extraction="llm",
     )
+    _fill_listing_fields(job, candidate)
+    return job
+
+
+def _fill_listing_fields(job: ScrapedJob, candidate: JobCandidate) -> None:
+    """Backfill salary / visa / state / etc. from the description we already have."""
+    extra = [s.strip() for s in (job.required_skills or "").split(",") if s.strip()]
+    fields = enrich_fields(
+        source=candidate.source,
+        url=candidate.url,
+        url_key=candidate.url_key,
+        location=job.location or candidate.location,
+        description=job.description,
+        extra_skills=extra,
+        seed=PostingFields(
+            posted_at=job.posted_at,
+            employment_type=job.employment_type,
+            salary=job.salary,
+            visa_sponsorship=job.visa_sponsorship,
+            experience_required=job.experience_required,
+            required_skills=job.required_skills,
+            state=job.state,
+            posting_id=job.posting_id,
+            source_type=job.source_type,
+        ),
+    )
+    job.apply_fields(fields)
 
 
 def fetch_all(

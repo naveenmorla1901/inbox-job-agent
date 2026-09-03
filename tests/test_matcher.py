@@ -1,4 +1,4 @@
-from app.config import get_profile
+from app.config import Profile, get_profile
 from app.matcher import match_job, max_years_required, score_title
 
 PROFILE = get_profile()
@@ -33,10 +33,22 @@ def test_unrelated_role_is_rejected_on_title():
     assert result.rejected
 
 
-def test_hard_blocker_keyword_rejects():
-    result = match_job(PROFILE, "Senior Data Scientist", CLEARED_JD, "Virginia", "GovCo")
+def test_unrelated_and_student_titles_are_not_worth_scraping():
+    from app.matcher import title_worth_scraping
+
+    assert title_worth_scraping(PROFILE, "Machine Learning Engineer")
+    assert title_worth_scraping(PROFILE, "AI Engineer")
+    assert not title_worth_scraping(PROFILE, "Human Resources Manager")
+    assert not title_worth_scraping(PROFILE, "Premier Banker- Metuchen")
+    assert not title_worth_scraping(PROFILE, "Data Science Student Experience - Spring 2027")
+    assert not title_worth_scraping(PROFILE, "Software Engineer")
+
+
+def test_no_sponsorship_posting_is_rejected():
+    jd = DS_JD + "\nThis position is not eligible for work authorization sponsorship."
+    result = match_job(PROFILE, "Data Scientist", jd, "Remote", "Acme")
     assert result.rejected
-    assert "clearance" in result.verdict
+    assert "sponsorship" in result.verdict.lower() or "no sponsorship" in result.verdict.lower()
 
 
 def test_seniority_penalty_applies():
@@ -55,3 +67,29 @@ def test_title_scoring_tiers():
     assert score_title(PROFILE, "AI Engineer")[0] == 1.0
     assert score_title(PROFILE, "Analytics Consultant")[0] >= 0.5
     assert score_title(PROFILE, "Warehouse Associate")[0] < 0.5
+
+
+def test_exec_and_manager_titles_are_rejected():
+    profile = Profile(
+        target_titles=["data scientist", "machine learning engineer"],
+        exclude_titles=["director", "head of", "vp", "manager", "vice president"],
+        skills=PROFILE.skills,
+        resume_text=PROFILE.resume_text,
+        max_years_experience=5,
+        remote_ok=True,
+    )
+    for title in (
+        "Director of Data Science",
+        "Head of Machine Learning",
+        "VP of Engineering",
+        "Engineering Manager",
+    ):
+        result = match_job(profile, title, DS_JD, "Remote", "Acme")
+        assert result.rejected, title
+
+
+def test_manager_does_not_match_management_word():
+    profile = Profile(exclude_titles=["manager"], title_keywords=["data"])
+    score, rejected = score_title(profile, "Data Management Analyst")
+    assert not rejected
+    assert score > 0

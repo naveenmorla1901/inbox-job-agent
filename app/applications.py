@@ -62,6 +62,7 @@ COMPANY_ONLY_PATTERNS = (
     # "Thanks for applying to Adobe" - what follows is the employer, not the role.
     re.compile(r"thank(?:s| you)?(?: very much)? for (?:applying|your application|your interest)(?:\s+(?:to|at|with|in))\s+(?P<company>[^-–—|!?.]+)", re.I),
     re.compile(r"^(?:applying|application) (?:to|at|with)\s+(?P<company>[^-–—|!?.]+)", re.I),
+    re.compile(r"your application was sent to\s+(?P<company>[^-–—|!?.]+)", re.I),
 )
 # A captured company often runs into the rest of the sentence ("Acme is moving forward").
 COMPANY_TAIL = re.compile(

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}{% if until %}Overnight extract{% else %}Last {{ hours }}h extract{% endif %} — Inbox Job Agent{% endblock %}
+{% block content %}
+<div class="card">
+  <h3>{% if until %}Overnight extract ({{ since | et("%b %d, %I:%M %p ET") }} – {{ until | et("%I:%M %p ET") }}){% else %}Temporary last-{{ hours }}-hour extract{% endif %}</h3>
+  <div class="meta">
+    {% if until %}
+    Mail received {{ since | et }} through {{ until | et }}.
+    {% else %}
+    Mail received since {{ since | et }}.
+    {% endif %}
+    This page is only for checking classify / link extract / scrape. Remove <code>/preview</code> when you are done.
+  </div>
+  <form class="filters" method="get" action="/preview" style="margin:12px 0 0">
+    <select name="hours">
+      {% for option in [1, 2, 3, 6, 12, 16, 24] %}
+      <option value="{{ option }}" {% if hours == option %}selected{% endif %}>last {{ option }}h</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Reload</button>
+  </form>
+  <div class="chips">
+    <span class="chip on">{{ messages|length }} email{{ "s" if messages|length != 1 else "" }}</span>
+    <span class="chip">{{ jobs|length }} postings saved</span>
+    <span class="chip on">{{ matched }} matched</span>
+    <span class="chip">{{ ignored }} ignored</span>
+    <span class="chip">{{ outreach|length }} follow-up{{ "s" if outreach|length != 1 else "" }}</span>
+    {% for key, count in categories.items() %}
+    <span class="chip">{{ key.replace("_", " ") }}: {{ count }}</span>
+    {% endfor %}
+    {% for status, count in scrape.items() %}
+    <span class="chip {% if status == 'ok' %}on{% endif %}">scrape {{ status }}: {{ count }}</span>
+    {% endfor %}
+  </div>
+</div>
+
+{% if not messages %}
+<p class="empty">No mail in this window. Run a poll, then refresh this page.</p>
+{% endif %}
+
+{% for message in messages %}
+<div class="card">
+  <div class="row">
+    <div>
+      <h3>
+        <a href="https://mail.google.com/mail/u/0/#inbox/{{ message.id }}" target="_blank" rel="noopener">
+          {{ message.subject[:90] or "(no subject)" }}
+        </a>
+      </h3>
+      <div class="meta">
+        <span class="chip">{{ message.category.replace("_", " ") }}</span>
+        {% if message.email_type %}<span class="chip">{{ message.email_type }}</span>{% endif %}
+        <span>{{ message.sender }} &lt;{{ message.sender_email }}&gt;</span>
+        <span>· {{ message.received_at | et("%b %d, %I:%M %p ET") }}</span>
+        <span>· {{ "%.2f"|format(message.confidence) }} · {{ message.reason }}</span>
+        <span>· links found {{ message.jobs_found }} · matched {{ message.jobs_matched }}</span>
+      </div>
+      {% if message.summary %}<p style="margin:8px 0 0">{{ message.summary }}</p>{% endif %}
+    </div>
+  </div>
+
+  {% set item = outreach_by_mail.get(message.id) %}
+  {% if item %}
+  <div class="meta" style="margin-top:10px">
+    <span class="chip on">follow-up</span>
+    <span>{{ item.person }}{% if item.company %} · {{ item.company }}{% endif %}{% if item.role %} · {{ item.role }}{% endif %}</span>
+    {% if item.action_required %}<span>· action: {{ item.action_required }}</span>{% endif %}
+    {% if item.scheduling_url %}<a href="{{ item.scheduling_url }}" target="_blank" rel="noopener">schedule</a>{% endif %}
+  </div>
+  {% endif %}
+
+  {% for job in jobs_by_mail.get(message.id, []) %}
+  <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--line)">
+    <div class="row">
+      <div>
+        <b><a href="/job/{{ job.id }}">{{ job.title or "Untitled role" }}</a></b>
+        <div class="meta">
+          <span>{{ job.company or job.source }}</span>
+          {% if job.location %}<span>· {{ job.location }}</span>{% endif %}
+          {% if job.state %}<span>· {{ job.state }}</span>{% endif %}
+          <span>· {{ job.source }}{% if job.source_type %} / {{ job.source_type.replace("_", " ") }}{% endif %}</span>
+          {% if job.posted_at %}<span>· posted {{ job.posted_at }}</span>{% endif %}
+          <span>· scrape {{ job.scrape_status or "?" }}{% if job.extraction %} via {{ job.extraction }}{% endif %}</span>
+          {% if not job.matched %}<span>· ignored</span>{% endif %}
+        </div>
+        <div class="chips">
+          {% if job.employment_type %}<span class="chip">{{ job.employment_type }}</span>{% endif %}
+          {% if job.salary %}<span class="chip on">{{ job.salary }}</span>{% endif %}
+          {% if job.visa_sponsorship %}<span class="chip">{{ job.visa_sponsorship }}</span>{% endif %}
+          {% if job.experience_required %}<span class="chip">{{ job.experience_required }}</span>{% endif %}
+          {% if job.posting_id %}<span class="chip">id {{ job.posting_id }}</span>{% endif %}
+          {% for skill in (job.required_skills or "").split(", ") if skill %}
+          <span class="chip">{{ skill }}</span>
+          {% endfor %}
+        </div>
+        <div class="meta" style="margin-top:6px">
+          <a href="{{ job.url }}" target="_blank" rel="noopener" class="joblink">{{ job.url }}</a>
+        </div>
+      </div>
+      <div class="score {% if job.score >= 0.7 %}s-hi{% elif job.score >= 0.55 %}s-mid{% else %}s-lo{% endif %}">
+        {{ "%.2f"|format(job.score) }}
+      </div>
+    </div>
+    {% if job.description %}
+    <pre style="max-height:180px; overflow:auto; margin-top:8px">{{ job.description[:700] }}{% if job.description|length > 700 %}…{% endif %}</pre>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endblock %}

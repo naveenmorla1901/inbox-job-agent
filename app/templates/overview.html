@@ -3,22 +3,44 @@
 {% block content %}
 <form class="filters" method="get" action="/overview">
   <select name="days">
-    {% for option in [1, 3, 7, 30, 90] %}
+    {% for option in [1, 2, 3, 7, 14, 30, 90] %}
     <option value="{{ option }}" {% if days == option %}selected{% endif %}>
       last {{ option }} day{{ "s" if option > 1 else "" }}
     </option>
     {% endfor %}
   </select>
-  <button type="submit">Refresh</button>
+  <label class="meta">from
+    <input type="date" name="since" value="{{ since }}">
+  </label>
+  <label class="meta">to
+    <input type="date" name="until" value="{{ until }}">
+  </label>
+  <button type="submit">Apply range</button>
 </form>
 
 <div class="card">
   <h3>{{ report.messages }} email{{ "s" if report.messages != 1 else "" }} processed</h3>
+  <div class="meta">Window: {{ report.window_label }} ({{ report.since }} → {{ report.until }})</div>
+  <div class="chips">
+    <span class="chip on">processed {{ report.messages }}</span>
+    <span class="chip">job alerts {{ report.categories[0][2] if report.categories else 0 }}</span>
+    <span class="chip">not job-alert {{ report.not_job_mail }}</span>
+    <span class="chip">acknowledgements {{ report.acknowledgements }}</span>
+    <span class="chip">rejections {{ report.rejections }}</span>
+    <span class="chip">unclassified {{ report.unclassified }}</span>
+    <span class="chip">follow-ups open {{ report.outreach_open }}</span>
+  </div>
   <table>
     <tr><th>Category</th><th style="width:90px">Count</th></tr>
     {% for key, label, count in report.categories %}
     <tr>
-      <td>{{ label }}</td>
+      <td>
+        {% if key == 'other' %}
+        <a href="/messages?category=other&days={{ report.days }}">{{ label }}</a>
+        {% else %}
+        {{ label }}
+        {% endif %}
+      </td>
       <td><b>{{ count }}</b></td>
     </tr>
     {% endfor %}
@@ -31,8 +53,8 @@
     <span class="chip">{{ report.jobs_found }} links found in alerts</span>
     <span class="chip">{{ report.jobs_stored }} postings saved</span>
     <span class="chip on">{{ report.jobs_matched }} match your profile</span>
+    <span class="chip">{{ report.jobs_ignored }} kept as ignored</span>
     <span class="chip">{{ report.jobs_duplicates }} repeats collapsed</span>
-    <span class="chip">{{ report.outreach_open }} follow-ups open</span>
   </div>
   <h3 style="margin-top:14px">Where they came from</h3>
   <div class="chips">
@@ -44,6 +66,14 @@
     <span class="chip {% if status == 'ok' %}on{% endif %}">{{ status }}: {{ count }}</span>
     {% endfor %}
   </div>
+  {% if report.email_types %}
+  <h3 style="margin-top:14px">Unclassified mail types</h3>
+  <div class="chips">
+    {% for kind, count in report.email_types %}
+    <span class="chip">{{ kind }}: {{ count }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
 </div>
 
 <div class="card">

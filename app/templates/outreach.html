@@ -37,11 +37,17 @@
         <span>{{ item.person or item.person_email }}</span>
         {% if item.company %}<span>· {{ item.company }}</span>{% endif %}
         {% if item.role %}<span>· {{ item.role }}</span>{% endif %}
-        <span>· {{ item.received_at.strftime("%b %d, %H:%M") }}</span>
+        {% if item.location %}<span>· {{ item.location }}</span>{% endif %}
+        {% if item.employment_type %}<span>· {{ item.employment_type }}</span>{% endif %}
+        {% if item.person_phone %}<span>· {{ item.person_phone }}</span>{% endif %}
+        <span>· {{ item.received_at | et("%b %d, %I:%M %p ET") }}</span>
       </div>
       {% if item.summary %}<p style="margin:8px 0 0">{{ item.summary }}</p>{% endif %}
       {% if item.action_required %}
       <p style="margin:6px 0 0; color: var(--warn)"><b>Action:</b> {{ item.action_required }}</p>
+      {% endif %}
+      {% if item.scheduling_url %}
+      <p style="margin:6px 0 0"><a href="{{ item.scheduling_url }}" target="_blank" rel="noopener">scheduling link</a></p>
       {% endif %}
     </div>
     <div style="text-align:right">

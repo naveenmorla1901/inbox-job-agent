@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -8,17 +9,24 @@ from datetime import datetime, timedelta, timezone
 from sqlmodel import Session, select
 
 from .applications import dupe_key, record_email
-from .classify import FOLLOW_UP_KINDS, JOB_ALERT, Classification, classify_email
+from .classify import (
+    APPLICATION_UPDATE,
+    JOB_ALERT,
+    OTHER,
+    Classification,
+    classify_email,
+)
 from .config import get_profile, get_settings
 from .db import exists, get_state, init_db, session_scope, set_state
 from .email_parse import ParsedEmail, parse_message
 from .extract_jobs import JobCandidate, extract_from_email
 from .gmail_client import GmailClient
+from .job_fields import enrich_fields, normalize_visa, phone_from_text, scheduling_url_from_links
 from .llm import LLM
-from .matcher import match_job
+from .matcher import match_job, title_worth_scraping
 from .models import Application, Job, Message, Outreach
 from .notify import Notifier
-from .scrape import ScrapedJob, fetch_all, llm_extract
+from .scrape import SHELL_TITLE, ScrapedJob, fetch_all, llm_extract
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +72,58 @@ def build_query(session: Session, since_days: int | None = None, override: str =
     return f"{settings.gmail_query} after:{after}".strip()
 
 
+def _pointer_job(email: ParsedEmail, candidate: JobCandidate, original: Job) -> Job:
+    """Same posting already stored from another email: keep a row so this digest still lists it."""
+    def clip(value: str | None, n: int) -> str:
+        return (value or "")[:n]
+
+    return Job(
+        message_id=email.id,
+        url=original.url or candidate.url,
+        url_key=f"{candidate.url_key}@{email.id}",
+        title=clip(original.title or candidate.title, 200),
+        company=clip(original.company or candidate.company, 150),
+        location=clip(original.location or candidate.location, 150),
+        source=original.source or candidate.source,
+        source_type=original.source_type or "",
+        posting_id=clip(original.posting_id, 120),
+        posted_at=clip(original.posted_at, 32),
+        state=clip(original.state, 20),
+        employment_type=clip(original.employment_type, 40),
+        salary=clip(original.salary, 80),
+        visa_sponsorship=clip(original.visa_sponsorship, 80),
+        experience_required=clip(original.experience_required, 80),
+        required_skills=clip(original.required_skills, 400),
+        description=clip(candidate.context or original.description, 20000),
+        score=original.score or 0.0,
+        title_score=original.title_score or 0.0,
+        skill_score=original.skill_score or 0.0,
+        resume_score=original.resume_score or 0.0,
+        matched_skills=clip(original.matched_skills, 500),
+        missing_skills=clip(original.missing_skills, 500),
+        verdict=clip(original.verdict, 300),
+        scraped=bool(original.scraped),
+        scrape_status=original.scrape_status or "",
+        extraction=original.extraction or "email",
+        matched=bool(original.matched),
+        status=original.status if original.status in ("new", "ignored") else "ignored",
+        dupe_key=original.dupe_key or "",
+        duplicate_of=original.duplicate_of or original.id,
+        received_at=email.received_at,
+    )
+
+
+def _jobs_to_fetch(session: Session, candidates: list[JobCandidate], profile) -> list[JobCandidate]:
+    wanted: list[JobCandidate] = []
+    for candidate in candidates:
+        if exists(session, Job, url_key=candidate.url_key):
+            continue
+        if not title_worth_scraping(profile, candidate.title):
+            continue
+        wanted.append(candidate)
+    return wanted
+
+
 def _store_jobs(
     session: Session,
     email: ParsedEmail,
@@ -77,12 +137,24 @@ def _store_jobs(
     stored: list[Job] = []
 
     for candidate in candidates:
-        if exists(session, Job, url_key=candidate.url_key):
+        original_row = session.exec(select(Job).where(Job.url_key == candidate.url_key)).first()
+        if original_row is not None:
+            if original_row.message_id == email.id:
+                continue
+            pointer_key = f"{candidate.url_key}@{email.id}"
+            if exists(session, Job, url_key=pointer_key):
+                continue
+            job = _pointer_job(email, candidate, original_row)
+            session.add(job)
+            stored.append(job)
             continue
 
         page = scraped.get(candidate.url_key, ScrapedJob(status="skipped"))
+        worth = title_worth_scraping(profile, candidate.title or page.title)
 
-        if not page.ok:
+        if not worth:
+            page = ScrapedJob(status="skipped", extraction="email")
+        elif not page.ok:
             # The page was blocked, empty or never fetched: try to salvage the fields with an
             # LLM over whatever text we do have (the alert email's own summary block).
             fallback_text = "\n".join(
@@ -96,9 +168,32 @@ def _store_jobs(
         company = page.company or candidate.company
         location = page.location or candidate.location
         description = page.description or candidate.context
+        if not page.ok:
+            title = candidate.title or page.title
+            company = candidate.company or page.company
+            location = candidate.location or page.location
+            description = candidate.context
+        if SHELL_TITLE.search(title or "") and candidate.title:
+            title = candidate.title
+            description = candidate.context or description
+            page.ok = False
+            page.status = "empty"
+        if candidate.company and re.match(r"^haystack$", company or "", re.I):
+            company = candidate.company
         extraction = page.extraction or ("email" if candidate.context else "")
+        extra_skills = [s.name for s in profile.skills]
+        fields = enrich_fields(
+            source=candidate.source,
+            url=candidate.url,
+            url_key=candidate.url_key,
+            location=location,
+            description=description,
+            extra_skills=extra_skills,
+        )
 
         result = match_job(profile, title, description, location, company)
+        if not worth and not result.rejected:
+            result.verdict = "not related — skipped job page"
         is_match = not result.rejected and result.score >= settings.min_job_score
 
         # Same role from a second board or a repeat alert: keep the row, point it at the original.
@@ -117,6 +212,17 @@ def _store_jobs(
             company=company[:150],
             location=location[:150],
             source=candidate.source,
+            source_type=page.source_type or fields.source_type,
+            posting_id=(page.posting_id or fields.posting_id)[:120],
+            posted_at=(page.posted_at or fields.posted_at)[:32],
+            state=(page.state or fields.state)[:20],
+            employment_type=(page.employment_type or fields.employment_type)[:40],
+            salary=(page.salary or fields.salary)[:80],
+            visa_sponsorship=normalize_visa(
+                page.visa_sponsorship or fields.visa_sponsorship, description
+            )[:80],
+            experience_required=(page.experience_required or fields.experience_required)[:80],
+            required_skills=(page.required_skills or fields.required_skills)[:400],
             description=description[:20000],
             score=result.score,
             title_score=result.title_score,
@@ -141,13 +247,21 @@ def _store_jobs(
 
 
 def _store_outreach(session: Session, email: ParsedEmail, result: Classification) -> Outreach:
+    blob = f"{email.subject}\n{email.body(4000)}"
     item = Outreach(
         message_id=email.id,
         kind=result.category,
         person=result.person or email.sender_name,
         person_email=email.sender_email,
+        person_phone=result.phone or phone_from_text(blob),
         company=result.company,
         role=result.role,
+        location=result.location,
+        state=result.state,
+        employment_type=result.employment_type,
+        experience_required=result.experience_required,
+        scheduling_url=result.scheduling_url
+        or scheduling_url_from_links([link.url for link in email.links] + re.findall(r"https?://[^\s<>\"')]+", blob)),
         subject=email.subject[:300],
         summary=result.summary or email.snippet[:300],
         action_required=result.action_required,
@@ -193,6 +307,7 @@ def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult
         reason=result.reason[:200],
         summary=result.summary[:1000],
         jobs_found=len(candidates),
+        email_type=result.email_type,
     )
     session.add(record)
     session.flush()
@@ -202,14 +317,17 @@ def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult
     application: Application | None = None
     status_changed = False
 
-    if result.category == JOB_ALERT and candidates:
+    if _should_store_jobs(result, candidates):
         scraped = (
-            fetch_all(candidates, timeout=settings.scrape_timeout)
+            fetch_all(
+                _jobs_to_fetch(session, candidates, get_profile()),
+                timeout=settings.scrape_timeout,
+            )
             if settings.scrape_job_pages
             else {}
         )
         jobs = _store_jobs(session, email, candidates, scraped, llm)
-    elif result.is_tracked:
+    if result.is_tracked:
         # Acknowledgements and rejections belong to the application timeline only; the
         # Follow-ups page is for mail that still wants something from you.
         if result.is_follow_up:
@@ -230,6 +348,20 @@ def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult
     )
 
 
+def _should_store_jobs(result: Classification, candidates: list[JobCandidate]) -> bool:
+    """Job-alert digests always explode into rows. Receipts and leftover mail that
+    still carry posting links (Monster 'similar jobs', Adzuna leftovers) do too.
+    """
+    if not candidates:
+        return False
+    if result.category == JOB_ALERT:
+        return True
+    if result.category in (APPLICATION_UPDATE, OTHER) and len(candidates) >= 1:
+        sources = {c.source for c in candidates if c.source}
+        return bool(sources)
+    return False
+
+
 def reclassify_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult:
     """Re-triage mail we already stored. Does not scrape job links again."""
     result = classify_email(email, get_profile(), llm, job_count=0)
@@ -239,6 +371,7 @@ def reclassify_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailRes
         record.confidence = result.confidence
         record.reason = result.reason[:200]
         record.summary = result.summary[:1000]
+        record.email_type = result.email_type
         session.add(record)
 
     outreach = session.exec(select(Outreach).where(Outreach.message_id == email.id)).first()
@@ -272,11 +405,55 @@ def reclassify_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailRes
     )
 
 
+def reextract_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult:
+    """Re-run link extract + scrape for mail we already stored."""
+    settings = get_settings()
+    candidates = extract_from_email(email, limit=settings.max_jobs_per_email)
+    result = classify_email(email, get_profile(), llm, job_count=len(candidates))
+    record = session.get(Message, email.id)
+    if record is not None:
+        record.category = result.category
+        record.confidence = result.confidence
+        record.reason = result.reason[:200]
+        record.summary = result.summary[:1000]
+        record.email_type = result.email_type
+        record.jobs_found = len(candidates)
+        session.add(record)
+
+    for job in session.exec(select(Job).where(Job.message_id == email.id)).all():
+        for application in session.exec(select(Application).where(Application.job_id == job.id)).all():
+            application.job_id = None
+            session.add(application)
+        session.delete(job)
+    session.flush()
+
+    jobs: list[Job] = []
+    if _should_store_jobs(result, candidates):
+        scraped = (
+            fetch_all(
+                _jobs_to_fetch(session, candidates, get_profile()),
+                timeout=settings.scrape_timeout,
+            )
+            if settings.scrape_job_pages
+            else {}
+        )
+        jobs = _store_jobs(session, email, candidates, scraped, llm)
+    if record is not None:
+        record.jobs_matched = sum(1 for job in jobs if job.matched)
+        session.add(record)
+    return EmailResult(
+        classification=result,
+        jobs=jobs,
+        jobs_found=len(candidates),
+    )
+
+
 def run_once(
     max_messages: int | None = None,
     since_days: int | None = None,
     query: str = "",
     reclassify: bool = False,
+    reextract: bool = False,
 ) -> RunStats:
     started = time.time()
     stats = RunStats(started_at=datetime.now(timezone.utc).isoformat())
@@ -299,16 +476,17 @@ def run_once(
 
         for message_id in message_ids:
             already = session.get(Message, message_id)
-            if already and not reclassify:
+            if already and not reclassify and not reextract:
                 stats.skipped += 1
                 continue
             try:
                 email = parse_message(gmail.get_message(message_id))
-                outcome = (
-                    reclassify_email(session, email, llm)
-                    if already
-                    else process_email(session, email, llm)
-                )
+                if already and reextract:
+                    outcome = reextract_email(session, email, llm)
+                elif already:
+                    outcome = reclassify_email(session, email, llm)
+                else:
+                    outcome = process_email(session, email, llm)
                 session.commit()
 
                 category = outcome.classification.category
