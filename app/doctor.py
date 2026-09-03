@@ -143,7 +143,8 @@ def check_llm(report: Report) -> None:
             SKIP,
             "disabled - rules only (this is a valid setup)",
             "set LLM_PROVIDER to gemini (or groq) and add any of GEMINI_API_KEY, GROQ_API_KEY, "
-            "NVIDIA_API_KEY, DEEPSEEK_API_KEY, OPENROUTER_API_KEY",
+            "NVIDIA_API_KEY, DEEPSEEK_API_KEY, OPENROUTER_API_KEY. A second Google "
+            "account goes in GEMINI_API_KEY_2 and is rotated with GEMINI_API_KEY.",
         )
         return
 

@@ -3,6 +3,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app import db, pipeline
 from app.config import get_settings
+from app.email_parse import ParsedEmail, extract_links
 from app.llm import LLM
 from app.models import Job, Message, Outreach
 from app.reporting import build_breakdown
@@ -39,6 +40,10 @@ def test_job_alert_stores_every_posting_and_flags_the_matches(session):
     assert all(job.status == "new" for job in matched)
     assert all(job.status == "ignored" for job in stored if not job.matched)
     assert session.get(Message, "m1").jobs_matched == len(matched)
+    linkedin = next(job for job in stored if job.source == "linkedin")
+    assert linkedin.source_type == "job_board"
+    assert linkedin.posting_id
+    assert linkedin.state or linkedin.location
 
 
 def test_skipped_scraping_is_recorded_on_the_row(session):
@@ -47,17 +52,53 @@ def test_skipped_scraping_is_recorded_on_the_row(session):
     assert {job.scrape_status for job in session.exec(select(Job)).all()} == {"skipped"}
 
 
-def test_same_posting_is_never_stored_twice(session):
+def test_same_posting_reattaches_to_a_later_email(session):
     pipeline.process_email(session, alert_email(), LLM())
     session.commit()
-    first = len(session.exec(select(Job)).all())
+    originals = session.exec(select(Job)).all()
+    assert originals
 
     repeat = alert_email()
     repeat.id = "m2"
-    pipeline.process_email(session, repeat, LLM())
+    outcome = pipeline.process_email(session, repeat, LLM())
     session.commit()
 
-    assert len(session.exec(select(Job)).all()) == first
+    stored = session.exec(select(Job)).all()
+    assert len(stored) == len(originals) * 2
+    pointers = [job for job in stored if job.message_id == "m2"]
+    assert len(pointers) == len(originals)
+    assert all(job.duplicate_of for job in pointers)
+    assert {job.url_key for job in originals}.isdisjoint({job.url_key for job in pointers})
+    assert len(outcome.jobs) == len(originals)
+
+
+def test_unrelated_email_titles_are_not_fetched(session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "scrape_job_pages", True, raising=False)
+    called: list[str] = []
+
+    def fake_fetch_all(candidates, timeout=15, workers=5):
+        called.extend(c.title for c in candidates)
+        return {}
+
+    monkeypatch.setattr(pipeline, "fetch_all", fake_fetch_all)
+    html = """
+    <a href="http://komatsu.jobs/job/Human-Resources-Manager/36799-en_US/">Human Resources Manager</a>
+    <a href="http://komatsu.jobs/job/AI-Engineer/36800-en_US/">AI Engineer</a>
+    """
+    mail = ParsedEmail(
+        id="skip-scrape",
+        sender_email="komatsuam-jobnotification@noreply.jobs2web.com",
+        subject="New jobs posted from komatsu.jobs",
+        html=html,
+        text="Your Job Alert matched the following jobs at komatsu.jobs.",
+    )
+    outcome = pipeline.process_email(session, mail, LLM())
+    session.commit()
+    assert "Human Resources Manager" not in called
+    assert "AI Engineer" in called
+    hr = next(job for job in outcome.jobs if "Human Resources" in job.title)
+    assert hr.scrape_status == "skipped"
+    assert not hr.matched
 
 
 def test_breakdown_counts_each_category(session):
@@ -100,6 +141,31 @@ def test_recruiter_mail_becomes_an_outreach_row(session):
     assert item.kind == "recruiter_outreach"
     assert item.person == "Priya R"
     assert item.urgency == "high"  # "today" in the body
+
+
+def test_confirmation_with_similar_jobs_stores_both(session):
+    html = """
+    <p>Your application was sent to Acme.</p>
+    <a href="https://www.linkedin.com/jobs/view/3901234567">Data Scientist</a>
+    <div>Acme Analytics · Remote</div>
+    <a href="https://www.linkedin.com/jobs/view/3907654321">Machine Learning Engineer</a>
+    <div>Northwind Labs · Austin, TX</div>
+    """
+    mail = ParsedEmail(
+        id="confirm-similar",
+        sender_name="LinkedIn",
+        sender_email="jobs-noreply@linkedin.com",
+        subject="Naveen, your application was sent to Acme",
+        html=html,
+        text="Your application was sent to Acme.",
+        links=extract_links(html),
+    )
+    outcome = pipeline.process_email(session, mail, LLM())
+    session.commit()
+    assert outcome.classification.category == "application_update"
+    assert outcome.application is not None
+    assert outcome.outreach is None
+    assert len(outcome.jobs) == 2
 
 
 def test_application_receipt_is_tracked_but_not_a_follow_up(session):

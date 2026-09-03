@@ -43,8 +43,13 @@
       <div class="meta">
         <span>{{ job.company or job.source }}</span>
         {% if job.location %}<span>· {{ job.location }}</span>{% endif %}
+        {% if job.state %}<span>· {{ job.state }}</span>{% endif %}
         <span>· {{ job.source }}</span>
-        <span>· {{ job.received_at.strftime("%b %d") }}</span>
+        <span>· {{ job.received_at | et("%b %d") }}</span>
+        {% if job.posted_at %}<span>· posted {{ job.posted_at }}</span>{% endif %}
+        {% if job.salary %}<span>· {{ job.salary }}</span>{% endif %}
+        {% if job.visa_sponsorship %}<span>· {{ job.visa_sponsorship }}</span>{% endif %}
+        {% if job.employment_type %}<span>· {{ job.employment_type }}</span>{% endif %}
         <span>· link: {{ job.scrape_status or "?" }}{% if job.extraction %} via {{ job.extraction }}{% endif %}</span>
         {% if not job.matched %}<span>· below threshold</span>{% endif %}
         {% if job.duplicate_of %}<span>· repeat of #{{ job.duplicate_of }}</span>{% endif %}

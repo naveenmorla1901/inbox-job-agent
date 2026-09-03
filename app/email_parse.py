@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parseaddr
+from html import unescape
 
 from bs4 import BeautifulSoup
 
@@ -56,6 +57,7 @@ def html_to_text(html: str) -> str:
 
 
 def clean_text(text: str) -> str:
+    text = unescape(text or "")
     text = WHITESPACE.sub(" ", text.replace("\u200c", "").replace("\xa0", " "))
     text = "\n".join(line.strip() for line in text.split("\n"))
     return BLANKLINES.sub("\n\n", text).strip()
@@ -114,7 +116,7 @@ def parse_message(msg: dict) -> ParsedEmail:
         sender_email=sender_email.lower(),
         to=headers.get("to", ""),
         subject=headers.get("subject", ""),
-        snippet=clean_text(msg.get("snippet", "")),
+        snippet=clean_text(unescape(msg.get("snippet", ""))),
         received_at=received,
         text=text,
         html=html,

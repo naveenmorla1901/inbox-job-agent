@@ -6,6 +6,14 @@ from dataclasses import dataclass
 from .config import Profile, get_settings
 from .email_parse import ParsedEmail
 from .extract_jobs import JOB_HOSTS
+from .job_fields import (
+    email_type_of,
+    employment_from_text,
+    experience_from_text,
+    phone_from_text,
+    scheduling_url_from_links,
+    state_of,
+)
 from .llm import CLASSIFY, LLM
 
 JOB_ALERT = "job_alert"
@@ -28,8 +36,11 @@ TRACKED_KINDS = (*FOLLOW_UP_KINDS, REJECTION, APPLICATION_UPDATE)
 OUTREACH_KINDS = TRACKED_KINDS  # kept for older callers
 
 ALERT_SUBJECT = re.compile(
-    r"(job alert|jobs? for you|new jobs?|\d+\s+new\s+(job|opportunit)|"
-    r"jobs? matching|recommended for you|your job alert|hiring now|new opportunities)",
+    r"(job alert|jobs? for you|your job search|new jobs?|job match(?:es)?|"
+    r"\d+\s+new\s+(job|opportunit)|jobs? matching|recommended for you|"
+    r"your job alert|hiring now|new opportunities|still available|"
+    r"you would be a great fit|career alerts?|potential roles|"
+    r"talent community|job match has arrived)",
     re.I,
 )
 INTERVIEW_RE = re.compile(
@@ -65,9 +76,10 @@ NEXT_STEP_RE = re.compile(
 )
 # An acknowledgement that the application landed, as opposed to a status change.
 SUBMITTED_RE = re.compile(
-    r"(successfully (submitted|applied)|application (was |has been )?(received|submitted|complete)|"
+    r"(successfully (submitted|applied|sent)|application (was |has been )?(received|submitted|sent|complete)|"
     r"we (have )?received your application|thank(s| you)?( very much)? for (applying|your application)|"
-    r"your application (has been|was) (received|submitted)|application confirmation)",
+    r"your application (has been|was) (received|submitted|sent)|application confirmation|"
+    r"your application was sent)",
     re.I,
 )
 OFFER_RE = re.compile(r"(offer letter|pleased to offer|job offer|we are excited to offer)", re.I)
@@ -80,8 +92,9 @@ REJECTION_RE = re.compile(
 APPLIED_RE = re.compile(
     r"(thank(s| you)?( very much)? for (applying|your (interest|application))|"
     r"thank(s| you)? for taking the time to apply|"
-    r"application (was )?(received|submitted|complete)|successfully (submitted|applied)|"
-    r"we (have )?received your application|your application (to|for|is|has)|application status)",
+    r"application (was )?(received|submitted|sent|complete)|successfully (submitted|applied|sent)|"
+    r"we (have )?received your application|your application (to|for|is|has|was sent)|"
+    r"application status)",
     re.I,
 )
 RECRUITER_RE = re.compile(
@@ -126,7 +139,9 @@ Allowed categories:
 Return JSON:
 {{"category": "...", "confidence": 0.0-1.0, "company": "", "role": "",
  "person": "", "summary": "one sentence", "action_required": "what the candidate must do, or ''",
- "urgency": "high|normal|low"}}
+ "urgency": "high|normal|low", "email_type": "webinar|newsletter|security|unclassified|''",
+ "phone": "", "location": "", "state": "", "employment_type": "",
+ "experience_required": "", "scheduling_url": ""}}
 
 From: {sender} <{sender_email}>
 Subject: {subject}
@@ -146,6 +161,13 @@ class Classification:
     person: str = ""
     action_required: str = ""
     urgency: str = "normal"
+    email_type: str = ""
+    phone: str = ""
+    location: str = ""
+    state: str = ""
+    employment_type: str = ""
+    experience_required: str = ""
+    scheduling_url: str = ""
 
     @property
     def is_follow_up(self) -> bool:
@@ -180,11 +202,8 @@ def classify_rules(email: ParsedEmail, profile: Profile, job_count: int = 0) -> 
     blob = f"{subject}\n{body}"
     automated = bool(NOREPLY_RE.search(email.sender_email))
 
-    if _looks_like_job_board(email, profile) and (ALERT_SUBJECT.search(subject) or job_count >= 2):
+    if _looks_like_job_board(email, profile) and ALERT_SUBJECT.search(subject):
         return Classification(JOB_ALERT, 0.95, "job board sender + alert subject")
-    if job_count >= 3 and automated:
-        return Classification(JOB_ALERT, 0.8, f"{job_count} posting links in automated mail")
-
     if OFFER_RE.search(blob):
         return Classification(OFFER, 0.9, "offer language")
     if REJECTION_RE.search(blob):
@@ -197,8 +216,14 @@ def classify_rules(email: ParsedEmail, profile: Profile, job_count: int = 0) -> 
         return Classification(ASSESSMENT, 0.85, "assessment language")
     if NEXT_STEP_RE.search(blob):
         return Classification(NEXT_STEP, 0.8, "asks you to complete a step")
-    if APPLIED_RE.search(blob):
+    # LinkedIn / Monster confirmations embed "similar jobs". Those links are extracted
+    # later; the mail itself is still an acknowledgement.
+    if SUBMITTED_RE.search(blob) or APPLIED_RE.search(blob):
         return Classification(APPLICATION_UPDATE, 0.8, "application acknowledgement")
+    if _looks_like_job_board(email, profile) and job_count >= 2:
+        return Classification(JOB_ALERT, 0.9, "job board sender + posting links")
+    if job_count >= 3 and automated:
+        return Classification(JOB_ALERT, 0.8, f"{job_count} posting links in automated mail")
     if RECRUITER_RE.search(blob):
         confidence = 0.6 if automated else 0.85
         return Classification(RECRUITER, confidence, "recruiter outreach language")
@@ -210,14 +235,24 @@ def classify_rules(email: ParsedEmail, profile: Profile, job_count: int = 0) -> 
 
 
 def _fill_from_email(result: Classification, email: ParsedEmail) -> Classification:
+    body = email.body(4000)
+    blob = f"{email.subject}\n{body}"
     if not result.person:
         result.person = email.sender_name
     if not result.summary:
         result.summary = email.snippet[:300]
     if not result.company and email.sender_domain:
         result.company = email.sender_domain.split(".")[0].title()
-    if URGENT_RE.search(f"{email.subject} {email.body(2000)}"):
+    if URGENT_RE.search(blob):
         result.urgency = "high"
+    result.email_type = result.email_type or email_type_of(result.category, email.subject, body)
+    result.phone = result.phone or phone_from_text(blob)
+    result.employment_type = result.employment_type or employment_from_text(blob)
+    result.experience_required = result.experience_required or experience_from_text(blob)
+    result.state = result.state or state_of(result.location, blob)
+    result.scheduling_url = result.scheduling_url or scheduling_url_from_links(
+        [link.url for link in email.links]
+    )
     return result
 
 
@@ -250,5 +285,12 @@ def classify_email(
                 person=str(data.get("person", ""))[:150],
                 action_required=str(data.get("action_required", ""))[:300],
                 urgency=str(data.get("urgency", "normal")).lower(),
+                email_type=str(data.get("email_type", ""))[:40],
+                phone=str(data.get("phone", ""))[:40],
+                location=str(data.get("location", ""))[:150],
+                state=str(data.get("state", ""))[:20],
+                employment_type=str(data.get("employment_type", ""))[:40],
+                experience_required=str(data.get("experience_required", ""))[:80],
+                scheduling_url=str(data.get("scheduling_url", ""))[:400],
             )
     return _fill_from_email(result, email)

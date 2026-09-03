@@ -24,6 +24,7 @@ def cmd_poll(args: argparse.Namespace) -> None:
         since_days=getattr(args, "days", None),
         query=getattr(args, "query", "") or "",
         reclassify=getattr(args, "refresh", False),
+        reextract=getattr(args, "refresh_jobs", False),
     )
     print(json.dumps(stats.as_dict(), indent=2))
     if getattr(args, "days", None) is not None:
@@ -48,10 +49,15 @@ def cmd_report(args: argparse.Namespace) -> None:
 
     init_db()
     with session_scope() as session:
-        report = build_breakdown(session, days=args.days)
+        report = build_breakdown(
+            session,
+            days=args.days,
+            since=getattr(args, "since", "") or None,
+            until=getattr(args, "until", "") or None,
+        )
 
     width = max((len(label) for _, label, _ in report.categories), default=10)
-    print(f"\nLast {report.days} day(s): {report.messages} email(s) processed")
+    print(f"\n{report.window_label}: {report.messages} email(s) processed")
     print("-" * (width + 10))
     for _, label, count in report.categories:
         if count:
@@ -60,8 +66,12 @@ def cmd_report(args: argparse.Namespace) -> None:
     print(f"job links found : {report.jobs_found}")
     print(f"postings saved  : {report.jobs_stored}")
     print(f"matching you    : {report.jobs_matched}")
+    print(f"kept as ignored : {report.jobs_ignored}")
     print(f"repeats hidden  : {report.jobs_duplicates}")
     print(f"follow-ups open : {report.outreach_open}")
+    print(f"acknowledgements: {report.acknowledgements}")
+    print(f"rejections      : {report.rejections}")
+    print(f"unclassified    : {report.unclassified}")
     if report.applications:
         pipeline = ", ".join(f"{status}={count}" for status, count in report.applications)
         print(f"applications    : {pipeline}")
@@ -170,6 +180,19 @@ def cmd_serve(args: argparse.Namespace) -> None:
     uvicorn.run("app.main:app", host="0.0.0.0", port=args.port, reload=args.reload)
 
 
+def cmd_inspect(args: argparse.Namespace) -> None:
+    from .inspect_run import run_inspect
+
+    path = run_inspect(
+        days=args.days,
+        max_messages=args.max,
+        message_id=args.message_id,
+        scrape=not args.no_scrape,
+        fixture_only=args.fixture_only,
+    )
+    print(f"wrote {path}")
+
+
 def cmd_match(args: argparse.Namespace) -> None:
     """Score arbitrary text against the profile, to tune weights without touching Gmail."""
     from .matcher import match_job
@@ -193,6 +216,11 @@ def main() -> None:
         action="store_true",
         help="re-triage mail already stored (picks up next-step / video rounds)",
     )
+    poll.add_argument(
+        "--refresh-jobs",
+        action="store_true",
+        help="re-extract and re-scrape postings from mail already stored",
+    )
     poll.set_defaults(func=cmd_poll)
 
     doctor = sub.add_parser("doctor", help="check Gmail, LLM, database, Telegram and scraping")
@@ -201,6 +229,8 @@ def main() -> None:
 
     report = sub.add_parser("report", help="category breakdown of what was processed")
     report.add_argument("--days", type=int, default=1)
+    report.add_argument("--since", default="", help="start date YYYY-MM-DD (overrides --days)")
+    report.add_argument("--until", default="", help="end date YYYY-MM-DD inclusive")
     report.set_defaults(func=cmd_report)
 
     loop = sub.add_parser("loop", help="poll forever (for a local machine or a container)")
@@ -228,6 +258,17 @@ def main() -> None:
     match.add_argument("--text", default="")
     match.add_argument("--file", default="")
     match.set_defaults(func=cmd_match)
+
+    inspect_cmd = sub.add_parser(
+        "inspect",
+        help="temporary: walk extraction / classify / scrape and write data/inspect-trace.md",
+    )
+    inspect_cmd.add_argument("--days", type=int, default=1)
+    inspect_cmd.add_argument("--max", type=int, default=6)
+    inspect_cmd.add_argument("--message-id", default="", help="inspect one Gmail message id")
+    inspect_cmd.add_argument("--no-scrape", action="store_true")
+    inspect_cmd.add_argument("--fixture-only", action="store_true", help="skip Gmail, use the sample alert")
+    inspect_cmd.set_defaults(func=cmd_inspect)
 
     args = parser.parse_args()
     args.func(args)

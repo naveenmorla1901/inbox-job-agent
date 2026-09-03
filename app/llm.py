@@ -51,6 +51,15 @@ PROVIDERS: dict[str, Provider] = {
         "gemini-2.0-flash",
         style="gemini",
     ),
+    # Same Gemini endpoint, second Google account. Cooldown and the post-call gap
+    # are per provider name, so a 429 on one key does not park the other.
+    "gemini2": Provider(
+        "gemini2",
+        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "gemini_api_key_2",
+        "gemini-2.0-flash",
+        style="gemini",
+    ),
     "groq": Provider(
         "groq",
         "https://api.groq.com/openai/v1/chat/completions",
@@ -86,9 +95,10 @@ PROVIDERS: dict[str, Provider] = {
 }
 
 # Cheap/fast first for high-volume triage; stronger models first for rare long extracts.
-CLASSIFY_ORDER = ("groq", "gemini", "nvidia", "deepseek", "openrouter")
-EXTRACT_ORDER = ("nvidia", "deepseek", "gemini", "groq", "openrouter")
+CLASSIFY_ORDER = ("groq", "gemini", "gemini2", "nvidia", "deepseek", "openrouter")
+EXTRACT_ORDER = ("nvidia", "deepseek", "gemini", "gemini2", "groq", "openrouter")
 TASK_ORDER = {CLASSIFY: CLASSIFY_ORDER, EXTRACT: EXTRACT_ORDER}
+GEMINI_NAMES = frozenset({"gemini", "gemini2"})
 
 # provider name -> unix time it may be tried again
 _cooldowns: dict[str, float] = {}
@@ -116,7 +126,7 @@ def parse_chain(spec: str) -> list[tuple[Provider, str]]:
         name, _, model = part.partition(":")
         provider = PROVIDERS.get(name.strip().lower())
         if provider:
-            chain.append((provider, model.strip() or provider.default_model))
+            chain.append((provider, model.strip()))
     return chain
 
 
@@ -125,6 +135,7 @@ class LLM:
 
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
+        self.last_used: str = ""  # "gemini:gemini-2.0-flash" after a successful call
 
     def key_for(self, provider: Provider) -> str:
         if provider.style == "ollama":
@@ -136,21 +147,24 @@ class LLM:
         return str(getattr(self.settings, provider.key_field, "") or "")
 
     def _model_for(self, provider: Provider) -> str:
+        if provider.style == "gemini":
+            return self.settings.gemini_model or provider.default_model
         return {
-            "gemini": self.settings.gemini_model,
             "groq": self.settings.groq_model,
             "ollama": self.settings.ollama_model,
         }.get(provider.name, provider.default_model) or provider.default_model
 
     def chain(self, task: str = CLASSIFY) -> list[tuple[Provider, str]]:
         settings = self.settings
-        spec = (getattr(settings, f"llm_chain_{task}", "") or settings.llm_chain).strip()
-        if spec:
-            return [(p, m) for p, m in parse_chain(spec) if self.key_for(p)]
-
-        # LLM_PROVIDER=none means rules only, even if keys sit in .env.
+        # LLM_PROVIDER=none means rules only, even if keys and chains sit in .env.
         if (settings.llm_provider or "none").lower() == "none":
             return []
+
+        spec = (getattr(settings, f"llm_chain_{task}", "") or settings.llm_chain).strip()
+        if spec:
+            return self._with_second_gemini(
+                [(p, m or self._model_for(p)) for p, m in parse_chain(spec) if self.key_for(p)]
+            )
 
         # Any other provider value turns LLMs on and walks every key you have,
         # cheapest-first for classify and strongest-first for extract.
@@ -165,6 +179,21 @@ class LLM:
                 continue
             out.append((provider, self._model_for(provider)))
             seen.add(name)
+        return out
+
+    def _with_second_gemini(
+        self, chain: list[tuple[Provider, str]]
+    ) -> list[tuple[Provider, str]]:
+        """If the chain names Gemini once and a second Google key exists, insert it next."""
+        names = {provider.name for provider, _ in chain}
+        extra = PROVIDERS["gemini2"]
+        if "gemini" not in names or "gemini2" in names or not self.key_for(extra):
+            return chain
+        out: list[tuple[Provider, str]] = []
+        for provider, model in chain:
+            out.append((provider, model))
+            if provider.name == "gemini":
+                out.append((extra, model))
         return out
 
     def describe(self, task: str = CLASSIFY) -> str:
@@ -184,6 +213,8 @@ class LLM:
                 continue
             answer = self._try_provider(provider, model, prompt, system, timeout)
             if answer:
+                self.last_used = f"{provider.name}:{model}"
+                self._rest_gemini(provider)
                 if skipped:
                     log.info("%s answered %s after skipping %s", provider.name, task, ", ".join(skipped))
                 return answer
@@ -231,6 +262,16 @@ class LLM:
     def _park(self, provider: Provider, seconds: int, why: str) -> None:
         _cooldowns[provider.name] = time.time() + seconds
         log.warning("%s %s - skipping it for %ds", provider.name, why, seconds)
+
+    def _rest_gemini(self, provider: Provider) -> None:
+        """After a successful Gemini call, sit that key out so the other account is used next."""
+        if provider.name not in GEMINI_NAMES:
+            return
+        gap = int(self.settings.llm_gemini_gap_seconds or 0)
+        if gap <= 0:
+            return
+        _cooldowns[provider.name] = time.time() + gap
+        log.info("%s resting %ds so the other Gemini key can take the next call", provider.name, gap)
 
     def _redact(self, text: str) -> str:
         """Provider errors quote the request URL, which can carry the API key."""
