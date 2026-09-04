@@ -54,6 +54,17 @@ def test_run_page_is_simple(client):
     assert b"Check now" in response.content
     assert b"every 30 minutes" in response.content
     assert b"Turn on new-mail trigger" not in response.content
+    assert b"extra GitHub copy" not in response.content
+
+
+def test_run_page_explains_github_copy_service(client, monkeypatch):
+    test_client, _engine = client
+    monkeypatch.setenv("K_SERVICE", "inbox-job-agent-git")
+    response = test_client.get("/activity")
+    assert response.status_code == 200
+    assert b"extra GitHub copy" in response.content
+    assert b"inbox-job-agent-git" in response.content
+    assert b"us-east1" in response.content
 
 
 def test_mail_page_bundles_jobs_under_the_email(client):

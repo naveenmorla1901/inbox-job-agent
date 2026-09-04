@@ -283,6 +283,12 @@ After GitHub is connected in Cloud Run (next section), each push to `main` rebui
 
 Do **not** put a Google key in GitHub. Secrets already on Cloud Run stay there.
 
+Do **not** click **Connect** on the Cloud Run **Overview** page. That button creates a **second** service (`inbox-job-agent-git`, often in `europe-west1`) with **no secrets**. Your real dashboard is already:
+
+`https://inbox-job-agent-244210842384.us-east1.run.app`
+
+Service name **`inbox-job-agent`**, region **`us-east1`**. Open **that** service, then **Set up continuous deployment**.
+
 You have **two logins**. Keep both. Do not try to make them the same.
 
 | Where | Account | What it is |
@@ -302,8 +308,8 @@ Google Cloud never “sees” the GitHub email. It only needs you to **install G
 
 1. In the **same Incognito window**, open [console.cloud.google.com](https://console.cloud.google.com) and sign in as **`naveen.morla04@gmail.com`**.
 2. Top bar project: **inbox-job-agent**.
-3. Open [Cloud Run → inbox-job-agent](https://console.cloud.google.com/run/detail/us-east1/inbox-job-agent?project=inbox-job-agent).
-4. Click **Set up continuous deployment**. If you do not see it: the three-dot menu on the service, or **Edit & deploy new revision** is the wrong button — look for **Set up continuous deployment** / **Connect repository**.
+3. Open [Cloud Run → inbox-job-agent](https://console.cloud.google.com/run/detail/us-east1/inbox-job-agent?project=inbox-job-agent) — the row whose region is **us-east1**, not `inbox-job-agent-git`.
+4. Click **Set up continuous deployment**. If you do not see it: the three-dot menu on **that** service. Do **not** use the Overview page **Connect** button (that creates `inbox-job-agent-git`).
 5. If it asks Cloud Build vs Developer Connect, pick **Developer Connect** or **Cloud Build** (either works). Click **Connect** / **Authenticate**.
 
 ### C. The GitHub popup (this is the confusing part)
@@ -336,6 +342,84 @@ You can delete GitHub secrets `GCP_SA_KEY` and `API_TOKEN`. They are not used fo
 
 If the repo still does not appear: GitHub → your user **`naveenmorla1901`** → **Settings** → **Applications** → **Installed GitHub Apps** → Google Cloud Build or Developer Connect → **Configure** → grant **`inbox-job-agent`**.
 
+### F. If the build fails with `fetchReadToken` / 403
+
+GitHub is already connected. Cloud Build just cannot **read** the repo until you grant one IAM role. This is **not** the Gmail vs GitHub email issue.
+
+The error looks like:
+
+`Permission 'developerconnect.gitRepositoryLinks.fetchReadToken' denied`
+
+Do this in PowerShell (same GCP login as before):
+
+```powershell
+gcloud config set project inbox-job-agent
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:244210842384-compute@developer.gserviceaccount.com" `
+  --role="roles/developerconnect.readTokenAccessor"
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:244210842384@cloudbuild.gserviceaccount.com" `
+  --role="roles/developerconnect.readTokenAccessor"
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:service-244210842384@gcp-sa-cloudbuild.iam.gserviceaccount.com" `
+  --role="roles/developerconnect.readTokenAccessor"
+```
+
+Or in the browser: [IAM & Admin](https://console.cloud.google.com/iam-admin/iam?project=inbox-job-agent) → **Grant access** → paste each of those three emails → role **Developer Connect Read Token Accessor** → Save.
+
+Then retry (do not reconnect GitHub):
+
+1. Open [Cloud Build → History](https://console.cloud.google.com/cloud-build/builds?project=inbox-job-agent).
+2. Open the failed build → **Retry**, or open **Triggers** → the `cloudrun-inbox-job-agent-...` trigger → **Run**.
+
+A green build should then **Pull → Build → Push → Deploy**. Your Cloud Run service stays in **us-east1**; the trigger name can say `europe-west1` because that is where Developer Connect stored the GitHub link. That is fine.
+
+### G. Check now says “No Gmail token” (two Cloud Run services)
+
+Connecting GitHub from Overview created a second website. Only the first one has Gmail.
+
+| Service | Region | URL | Use it? |
+| --- | --- | --- | --- |
+| `inbox-job-agent` | **us-east1** | https://inbox-job-agent-244210842384.us-east1.run.app | **Yes** — Gmail, Neon, password |
+| `inbox-job-agent-git` | europe-west1 | `…europe-west1.run.app` | **No** — empty copy from Connect |
+
+1. Open **only** https://inbox-job-agent-244210842384.us-east1.run.app and log in with the dashboard password.
+2. If **Check now** still says no Gmail token on that URL, the secret is not attached. In PowerShell:
+
+```powershell
+gcloud config set project inbox-job-agent
+gcloud run services update inbox-job-agent --region us-east1 --update-secrets "GMAIL_TOKEN_JSON=gmail-token:latest,PROFILE_YAML=profile-yaml:latest"
+```
+
+Or in the browser: Cloud Run → **inbox-job-agent** (us-east1) → **Edit & deploy new revision** → **Variables & secrets** → **Reference a secret** → secret `gmail-token` → **Exposed as environment variable** named `GMAIL_TOKEN_JSON` → version **latest** → Deploy.
+
+3. Delete the extra service so you do not open it again:
+
+```powershell
+gcloud run services delete inbox-job-agent-git --region europe-west1
+```
+
+In the console: Cloud Run → **inbox-job-agent-git** → Delete.
+
+Do **not** copy secrets onto `inbox-job-agent-git`. Keep one service in **us-east1**.
+
+If the secret `gmail-token` was never created, on the laptop:
+
+```powershell
+gcloud secrets create gmail-token --data-file=secrets\token.json
+```
+
+If it already exists:
+
+```powershell
+gcloud secrets versions add gmail-token --data-file=secrets\token.json
+```
+
+Then run the `gcloud run services update` command above.
+
 ### Same image on this PC
 
 ```powershell
@@ -361,10 +445,11 @@ gcloud run services update inbox-job-agent --region us-east1 --update-secrets PR
 | Deploy asks for billing | Step 2: link a billing account |
 | `gcloud` is not recognized | Reopen PowerShell after installing the SDK |
 | Secret permission error | Step 7 IAM binding with **project number** |
-| Login page, then empty mail | Neon URL missing or still on SQLite default |
+| Check now: `No Gmail token` | You opened `inbox-job-agent-git` (europe-west1). Use the us-east1 URL. Attach secret `gmail-token` as `GMAIL_TOKEN_JSON` (Step 11 G). |
 | `invalid_grant` / Gmail auth error | Re-run `python -m app.auth_setup` locally, then update `gmail-token` |
 | Token dies after a week | Publish the OAuth consent screen (not Testing) |
 | 401 on `/api/run` | Scheduler header `x-api-token` does not match `API_TOKEN` |
 | Site works, no new mail | Scheduler missing, or Gmail query too narrow |
 | GitHub connect does not list the repo | You authorized the GitHub user for the GCP Gmail. Install the app on **`naveenmorla1901`**. Use Incognito. Click **Install on another GitHub account**. |
+| Build fails in ~10s with `fetchReadToken` / 403 | GitHub is connected. Grant **Developer Connect Read Token Accessor** to the Cloud Build accounts (Step 11 F), then retry the build. |
 | GitHub “Node.js 20 is deprecated” | Harmless warning. The Docker workflow does not use that Google action. |

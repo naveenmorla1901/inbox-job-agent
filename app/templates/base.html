@@ -62,6 +62,8 @@
     .nested { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
     .joblink { font-size: 12px; color: var(--muted); word-break: break-all; }
     .joblink:hover { color: var(--accent); }
+    .setup-steps { margin: 8px 0 0; padding-left: 18px; color: var(--text); }
+    .setup-steps li { margin: 4px 0; }
   </style>
 </head>
 <body>
@@ -79,6 +81,32 @@
     <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}">Run</a>
   </nav>
 </header>
-<main>{% block content %}{% endblock %}</main>
+<main>
+{% if host_setup and host_setup.warning and request.url.path != "/login" %}
+<div class="flash bad">
+  {% if host_setup.wrong_service %}
+  <b>This is the extra GitHub copy, not the real dashboard.</b>
+  <p class="meta" style="color:inherit;margin:8px 0 0">
+    You opened Cloud Run service <code>{{ host_setup.service }}</code> (usually europe-west1).
+    That copy has no Gmail token, Neon database, or dashboard password.
+  </p>
+  <ol class="setup-steps">
+    <li>Open the real site: <a href="{{ host_setup.real_url }}">{{ host_setup.real_url }}</a></li>
+    <li>That service is <code>{{ host_setup.real_service }}</code> in <code>{{ host_setup.real_region }}</code>.</li>
+    <li>In Cloud Run, delete <code>{{ host_setup.service }}</code> so this does not happen again.</li>
+  </ol>
+  {% else %}
+  <b>Gmail is not attached to this Cloud Run service.</b>
+  <ol class="setup-steps">
+    <li>Open Cloud Run → <code>{{ host_setup.real_service }}</code> in <code>{{ host_setup.real_region }}</code> (not <code>inbox-job-agent-git</code>).</li>
+    <li>Edit &amp; deploy new revision → Variables &amp; secrets.</li>
+    <li>Reference secret <code>gmail-token</code> as environment variable <code>GMAIL_TOKEN_JSON</code> (version latest).</li>
+    <li>Deploy, then click Check now again.</li>
+  </ol>
+  {% endif %}
+</div>
+{% endif %}
+{% block content %}{% endblock %}
+</main>
 </body>
 </html>
