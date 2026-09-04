@@ -336,6 +336,41 @@ You can delete GitHub secrets `GCP_SA_KEY` and `API_TOKEN`. They are not used fo
 
 If the repo still does not appear: GitHub → your user **`naveenmorla1901`** → **Settings** → **Applications** → **Installed GitHub Apps** → Google Cloud Build or Developer Connect → **Configure** → grant **`inbox-job-agent`**.
 
+### F. If the build fails with `fetchReadToken` / 403
+
+GitHub is already connected. Cloud Build just cannot **read** the repo until you grant one IAM role. This is **not** the Gmail vs GitHub email issue.
+
+The error looks like:
+
+`Permission 'developerconnect.gitRepositoryLinks.fetchReadToken' denied`
+
+Do this in PowerShell (same GCP login as before):
+
+```powershell
+gcloud config set project inbox-job-agent
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:244210842384-compute@developer.gserviceaccount.com" `
+  --role="roles/developerconnect.readTokenAccessor"
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:244210842384@cloudbuild.gserviceaccount.com" `
+  --role="roles/developerconnect.readTokenAccessor"
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:service-244210842384@gcp-sa-cloudbuild.iam.gserviceaccount.com" `
+  --role="roles/developerconnect.readTokenAccessor"
+```
+
+Or in the browser: [IAM & Admin](https://console.cloud.google.com/iam-admin/iam?project=inbox-job-agent) → **Grant access** → paste each of those three emails → role **Developer Connect Read Token Accessor** → Save.
+
+Then retry (do not reconnect GitHub):
+
+1. Open [Cloud Build → History](https://console.cloud.google.com/cloud-build/builds?project=inbox-job-agent).
+2. Open the failed build → **Retry**, or open **Triggers** → the `cloudrun-inbox-job-agent-...` trigger → **Run**.
+
+A green build should then **Pull → Build → Push → Deploy**. Your Cloud Run service stays in **us-east1**; the trigger name can say `europe-west1` because that is where Developer Connect stored the GitHub link. That is fine.
+
 ### Same image on this PC
 
 ```powershell
@@ -367,4 +402,5 @@ gcloud run services update inbox-job-agent --region us-east1 --update-secrets PR
 | 401 on `/api/run` | Scheduler header `x-api-token` does not match `API_TOKEN` |
 | Site works, no new mail | Scheduler missing, or Gmail query too narrow |
 | GitHub connect does not list the repo | You authorized the GitHub user for the GCP Gmail. Install the app on **`naveenmorla1901`**. Use Incognito. Click **Install on another GitHub account**. |
+| Build fails in ~10s with `fetchReadToken` / 403 | GitHub is connected. Grant **Developer Connect Read Token Accessor** to the Cloud Build accounts (Step 11 F), then retry the build. |
 | GitHub “Node.js 20 is deprecated” | Harmless warning. The Docker workflow does not use that Google action. |
