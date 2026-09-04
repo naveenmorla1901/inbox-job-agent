@@ -14,7 +14,7 @@ COPY app ./app
 COPY config ./config
 RUN mkdir -p data secrets
 
-# Hugging Face Spaces expects 7860; Render/Koyeb/Fly inject $PORT.
+# Cloud Run sets PORT=8080. Local Docker can keep 7860.
 ENV PORT=7860
 EXPOSE 7860
 

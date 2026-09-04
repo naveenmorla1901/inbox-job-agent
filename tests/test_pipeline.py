@@ -230,3 +230,15 @@ def test_refresh_demotes_a_receipt_off_follow_ups(session):
     session.commit()
     assert outcome.outreach is None
     assert session.exec(select(Outreach)).one().kind == "application_update"
+
+
+def test_clear_inbox_keeps_only_future_mail(session):
+    pipeline.process_email(session, alert_email(), LLM())
+    session.commit()
+    assert session.exec(select(Job)).first() is not None
+
+    counts = pipeline.clear_inbox(session, from_now=True)
+    assert counts["jobs"] >= 1
+    assert session.exec(select(Job)).first() is None
+    assert session.exec(select(Message)).first() is None
+    assert int(db.get_state(session, pipeline.STATE_CURSOR)) > 0

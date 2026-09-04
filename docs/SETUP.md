@@ -254,12 +254,17 @@ Variables tab: `LLM_PROVIDER=gemini`, optionally `MIN_JOB_SCORE`, `GMAIL_QUERY`.
 
 ---
 
-## Step 8 — Hugging Face Space (the dashboard, always on)
+## Step 8 — Cloud Run (the dashboard)
 
-Full instructions in [`deploy.md`](deploy.md). Short version: create a **Docker** Space, push this
-repo to it with `deploy/huggingface/README.md` as the Space's `README.md`, and add the same secrets
-plus `API_TOKEN` (a long random string — it is the dashboard password). Point it at the same
-`DATABASE_URL` and it shows exactly what the Actions poller collects.
+The live site is Google Cloud Run. Full first-time steps: [`deploy.md`](deploy.md).
+
+Pushing to GitHub does **not** update Cloud Run or your profile. After you edit
+`config/profile.yaml` locally:
+
+```powershell
+gcloud secrets versions add profile-yaml --data-file=config\profile.yaml
+gcloud run services update inbox-job-agent --region us-east1 --update-secrets PROFILE_YAML=profile-yaml:latest
+```
 
 ---
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -13,7 +14,17 @@ from .applications import CLOSED_STATUSES, STATUS_RANK, create_from_job, stale_a
 from .classify import FOLLOW_UP_KINDS, NOREPLY_RE
 from .config import ROOT, get_profile, get_settings
 from .db import get_engine, init_db
+from .gmail_client import parse_gmail_push
 from .models import Application, ApplicationEvent, Job, Message, Outreach
+from .pipeline import (
+    clear_inbox,
+    load_last_run,
+    maybe_renew_watch,
+    run_once,
+    start_gmail_watch,
+    watch_expiration_ms,
+)
+from .reporting import build_breakdown
 from .timefmt import fmt_et, parse_et_datetime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -27,7 +38,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Inbox Job Agent", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
+app = FastAPI(title="Inbox Job Agent", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 templates = Jinja2Templates(directory=str(ROOT / "app" / "templates"))
 templates.env.filters["et"] = fmt_et
 
@@ -59,6 +70,14 @@ async def gate(request: Request, call_next):
                 return JSONResponse({"detail": "unauthorized"}, status_code=401)
             return RedirectResponse("/login", status_code=302)
     return await call_next(request)
+
+
+def pending_outreach_count(session: Session) -> int:
+    return session.exec(
+        select(func.count())
+        .select_from(Outreach)
+        .where(Outreach.handled == False, col(Outreach.kind).in_(FOLLOW_UP_KINDS))  # noqa: E712
+    ).one()
 
 
 def require_token(request: Request) -> None:
@@ -120,11 +139,7 @@ def jobs_page(
     order = col(Job.score).desc() if sort == "score" else col(Job.received_at).desc()
     jobs = session.exec(stmt.order_by(order).limit(300)).all()
 
-    pending_outreach = session.exec(
-        select(func.count())
-        .select_from(Outreach)
-        .where(Outreach.handled == False, col(Outreach.kind).in_(FOLLOW_UP_KINDS))  # noqa: E712
-    ).one()
+    pending_outreach = pending_outreach_count(session)
 
     return templates.TemplateResponse(
         request,
@@ -161,8 +176,96 @@ def overview_page(
     return templates.TemplateResponse(
         request,
         "overview.html",
-        {"report": report, "days": days, "since": since, "until": until},
+        {
+            "report": report,
+            "days": days,
+            "since": since,
+            "until": until,
+            "pending_outreach": pending_outreach_count(session),
+        },
     )
+
+
+def _activity_context(session: Session, **extra) -> dict:
+    settings = get_settings()
+    exp_ms = watch_expiration_ms(session)
+    expires_at = (
+        datetime.fromtimestamp(exp_ms / 1000, tz=timezone.utc) if exp_ms else None
+    )
+    watching = bool(exp_ms and exp_ms > time.time() * 1000)
+    return {
+        "pending_outreach": pending_outreach_count(session),
+        "last_run": extra.pop("last_run", None) or load_last_run(session),
+        "topic_ready": bool(settings.gmail_pubsub_topic.strip()),
+        "watching": watching,
+        "watch_until": fmt_et(expires_at, "%b %d, %I:%M %p ET") if expires_at else "",
+        "flash": extra.pop("flash", ""),
+        "error": extra.pop("error", ""),
+        **extra,
+    }
+
+
+@app.get("/activity", response_class=HTMLResponse)
+def activity_page(
+    request: Request,
+    session: Session = Depends(db_session),
+    fresh: str = "",
+    checked: str = "",
+    on: str = "",
+):
+    flash = ""
+    if fresh:
+        flash = "Saved jobs and mail history were cleared. Only new emails will be analyzed."
+    elif checked:
+        last = load_last_run(session)
+        flash = (
+            f"Checked {last.get('fetched', 0)} email(s). "
+            f"Analyzed {last.get('processed', 0)} new. "
+            f"Skipped {last.get('skipped', 0)} already seen."
+        )
+    elif on:
+        flash = "New-mail trigger is on. The next inbox message will be analyzed automatically."
+    return templates.TemplateResponse(
+        request, "activity.html", _activity_context(session, flash=flash)
+    )
+
+
+@app.post("/activity/check")
+def activity_check(request: Request, session: Session = Depends(db_session)):
+    require_token(request)
+    try:
+        run_once()
+    except Exception as exc:
+        logging.getLogger(__name__).exception("manual inbox check failed")
+        return templates.TemplateResponse(
+            request,
+            "activity.html",
+            _activity_context(session, error=str(exc)),
+            status_code=500,
+        )
+    return RedirectResponse("/activity?checked=1", status_code=303)
+
+
+@app.post("/activity/reset")
+def activity_reset(request: Request, session: Session = Depends(db_session)):
+    require_token(request)
+    clear_inbox(session, from_now=True)
+    return RedirectResponse("/activity?fresh=1", status_code=303)
+
+
+@app.post("/activity/watch")
+def activity_watch(request: Request, session: Session = Depends(db_session)):
+    require_token(request)
+    try:
+        start_gmail_watch()
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request,
+            "activity.html",
+            _activity_context(session, error=str(exc)),
+            status_code=400,
+        )
+    return RedirectResponse("/activity?on=1", status_code=303)
 
 
 @app.get("/api/breakdown")
@@ -457,3 +560,19 @@ def api_stats(session: Session = Depends(db_session)) -> dict:
 def api_run(request: Request, max_messages: int | None = None) -> dict:
     require_token(request)
     return run_once(max_messages).as_dict()
+
+
+@app.post("/api/gmail-push")
+async def api_gmail_push(request: Request) -> dict:
+    """Pub/Sub calls this when Gmail says the inbox changed."""
+    require_token(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    parse_gmail_push(body)
+    try:
+        maybe_renew_watch()
+    except Exception:
+        logging.getLogger(__name__).exception("gmail watch renew failed")
+    return run_once().as_dict()

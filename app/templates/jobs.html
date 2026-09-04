@@ -32,7 +32,7 @@
 </form>
 
 {% if not jobs %}
-  <p class="empty">No jobs yet. Run a poll: <code>python -m app.run poll</code></p>
+  <p class="empty">No matching jobs yet. Open <a href="/activity">Inbox</a> and check new mail.</p>
 {% endif %}
 
 {% for job in jobs %}

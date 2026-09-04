@@ -30,6 +30,12 @@
       border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 14px; }
     button { cursor: pointer; }
     button:hover { border-color: var(--accent); }
+    button.primary { background: #1d3d72; border-color: #3d6cb3; color: #fff; }
+    button.danger { background: #3a1d1d; border-color: #7a3030; }
+    .flash { background: #16301c; border: 1px solid #24422b; color: var(--good);
+      border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
+    .flash.bad { background: #3a1d1d; border-color: #7a3030; color: #ffb1ad; }
+    button:disabled { opacity: .6; cursor: wait; }
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
       padding: 14px 16px; margin-bottom: 12px; }
     .card h3 { margin: 0 0 4px; font-size: 16px; }
@@ -67,9 +73,8 @@
     <a href="/applications" class="{% if request.url.path.startswith('/application') %}active{% endif %}">
       Applications
     </a>
-    <a href="/messages" class="{% if request.url.path == '/messages' %}active{% endif %}">Mail log</a>
-    <a href="/preview" class="{% if request.url.path == '/preview' %}active{% endif %}">Last hour</a>
-    <a href="/api/docs">API</a>
+    <a href="/messages" class="{% if request.url.path == '/messages' %}active{% endif %}">Mail</a>
+    <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}">Inbox</a>
   </nav>
 </header>
 <main>{% block content %}{% endblock %}</main>

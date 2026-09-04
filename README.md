@@ -98,54 +98,20 @@ python -m app.run match --title "Machine Learning Engineer" --file some_job.txt
 Prints the score breakdown, matched skills, and missing skills so you can calibrate weights and
 `MIN_JOB_SCORE` before trusting it.
 
-## Free hosting
+## Hosting
 
-You need two things running: a **scheduled poller** and (optionally) the **dashboard**. Mix and
-match — the pieces share the same database URL.
+This app runs on **Google Cloud Run** (dashboard) with **Neon Postgres** and a Gmail push trigger.
+First-time steps: [`docs/deploy.md`](docs/deploy.md).
 
-| Piece | Free option | Notes |
-| --- | --- | --- |
-| Poller | **GitHub Actions** (`.github/workflows/poll.yml`) | 2,000 min/month private, unlimited public. Cron every 15 min. |
-| Poller | Local machine / Raspberry Pi | `python -m app.run loop`, or Docker. |
-| Dashboard | **Hugging Face Spaces** (Docker SDK) | Always-on, port 7860, no credit card. |
-| Dashboard | Render / Koyeb free web service | Render free instances sleep when idle; fine for a personal dashboard. |
-| Dashboard | Fly.io / Oracle Cloud always-free VM | Oracle's ARM VM is the most generous permanent free compute. |
-| Database | SQLite file (default) | Zero setup; on GitHub Actions it lives in the Actions cache (expires after 7 idle days). |
-| Database | **Neon / Supabase free Postgres** | Durable across hosts: set `DATABASE_URL=postgresql+psycopg://…` and `pip install psycopg[binary]`. |
-| LLM (optional) | **Groq**, **Gemini**, **NVIDIA NIM**, **DeepSeek**, **OpenRouter** free tiers, or local **Ollama** | Set `LLM_PROVIDER` to anything except `none`. Extra keys become automatic failover. |
-| Notifications | **Telegram bot** | Free and instant. `@BotFather` for the token, `@userinfobot` for the chat id. |
+Pushing to GitHub does **not** deploy Cloud Run and does **not** update `config/profile.yaml`.
+That file is gitignored. After you edit it locally:
 
-Step-by-step for the recommended combo (Actions + Spaces + Neon):
-[`docs/deploy.md`](docs/deploy.md). More options: [free-for-dev](https://github.com/ripienaar/free-for-dev)
-and [`docs/free-resources.md`](docs/free-resources.md).
-
-On hosts where you only have environment variables, `PROFILE_YAML` and `GMAIL_TOKEN_JSON` replace
-`config/profile.yaml` and `secrets/token.json` — no files to mount.
-
-### GitHub Actions (recommended for the poller)
-
-Push this repo (private), then add under **Settings → Secrets and variables → Actions**:
-
-| Secret | Value |
-| --- | --- |
-| `GMAIL_TOKEN_JSON` | the entire contents of `secrets/token.json` |
-| `PROFILE_YAML` | the entire contents of `config/profile.yaml` |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | optional, for pings |
-| `GEMINI_API_KEY` or `GROQ_API_KEY` | optional |
-| `DATABASE_URL` | optional; set it to free Postgres for durable history |
-
-The workflow runs every 15 minutes and can be triggered manually from the Actions tab.
-
-### Docker / Hugging Face Spaces
-
-```bash
-docker build -t inbox-job-agent .
-docker run -p 7860:7860 --env-file .env -v "$PWD/data:/app/data" -v "$PWD/secrets:/app/secrets" inbox-job-agent
+```powershell
+gcloud secrets versions add profile-yaml --data-file=config\profile.yaml
+gcloud run services update inbox-job-agent --region us-east1 --update-secrets PROFILE_YAML=profile-yaml:latest
 ```
 
-For a Space: create a **Docker** Space, push this repo, and add the same values as Space secrets.
-Set `API_TOKEN` to something long — the dashboard asks for it at `/login` and everything else is
-blocked without it.
+On Cloud Run, `PROFILE_YAML` and `GMAIL_TOKEN_JSON` replace the local files.
 
 ## Where every credential goes
 
@@ -164,7 +130,7 @@ Nothing is hard-coded and nothing but these two files (plus `secrets/`) is perso
 | DeepSeek / OpenRouter | `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY` | same names |
 | Local model instead | `LLM_PROVIDER=ollama`, `OLLAMA_MODEL` | n/a |
 | Telegram alerts | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | same names as secrets |
-| Dashboard password | `API_TOKEN` | same name; generated automatically on Render |
+| Dashboard password | `API_TOKEN` | same name on Cloud Run |
 | Database | `DATABASE_URL` (SQLite by default) | `DATABASE_URL` secret for free Postgres |
 
 ## Configuration

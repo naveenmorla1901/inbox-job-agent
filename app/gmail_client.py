@@ -108,6 +108,24 @@ class GmailClient:
         self._label_id = created["id"]
         return self._label_id
 
+    def watch_inbox(self, topic: str) -> dict[str, Any]:
+        """Ask Gmail to publish a notification to `topic` when INBOX changes.
+
+        The watch expires after about 7 days and must be renewed.
+        """
+        return (
+            self.service.users()
+            .watch(
+                userId="me",
+                body={
+                    "topicName": topic,
+                    "labelIds": ["INBOX"],
+                    "labelFilterBehavior": "INCLUDE",
+                },
+            )
+            .execute()
+        )
+
     def add_label(self, message_id: str, name: str) -> None:
         try:
             label_id = self.ensure_label(name)
@@ -116,6 +134,22 @@ class GmailClient:
             ).execute()
         except Exception as exc:  # labeling is a nicety, never fail the pipeline for it
             log.warning("could not label %s: %s", message_id, exc)
+
+
+def parse_gmail_push(body: dict[str, Any]) -> dict[str, Any]:
+    """Decode a Cloud Pub/Sub push envelope from Gmail's watch notification."""
+    message = body.get("message") if isinstance(body, dict) else None
+    if not isinstance(message, dict):
+        return {}
+    data = message.get("data")
+    if not data:
+        return {}
+    try:
+        raw = base64.b64decode(data)
+        parsed = json.loads(raw.decode("utf-8"))
+    except (ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def decode_part(data: str) -> str:

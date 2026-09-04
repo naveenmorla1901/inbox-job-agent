@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -24,13 +25,15 @@ from .gmail_client import GmailClient
 from .job_fields import enrich_fields, normalize_visa, phone_from_text, scheduling_url_from_links
 from .llm import LLM
 from .matcher import match_job, title_worth_scraping
-from .models import Application, Job, Message, Outreach
+from .models import Application, ApplicationEvent, Job, Message, Outreach
 from .notify import Notifier
 from .scrape import SHELL_TITLE, ScrapedJob, fetch_all, llm_extract
 
 log = logging.getLogger(__name__)
 
 STATE_CURSOR = "last_poll_epoch"
+STATE_WATCH = "gmail_watch_expiration"
+STATE_LAST_RUN = "last_run_json"
 OVERLAP_SECONDS = 300
 
 
@@ -49,6 +52,7 @@ class RunStats:
     notified: int = 0
     categories: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+    emails: list[dict] = field(default_factory=list)
     started_at: str = ""
     duration_s: float = 0.0
 
@@ -70,6 +74,105 @@ def build_query(session: Session, since_days: int | None = None, override: str =
             lookback = timedelta(days=settings.gmail_initial_lookback_days)
             after = int((datetime.now(timezone.utc) - lookback).timestamp())
     return f"{settings.gmail_query} after:{after}".strip()
+
+
+def clear_inbox(session: Session, *, from_now: bool = True) -> dict[str, int]:
+    """Delete everything this app stored. Gmail itself is not touched.
+
+    `from_now` plants the poll cursor at this moment so the next run only
+    picks up mail that arrives after the reset.
+    """
+    counts = {
+        "events": 0,
+        "applications": 0,
+        "outreach": 0,
+        "jobs": 0,
+        "messages": 0,
+    }
+    for key, model in (
+        ("events", ApplicationEvent),
+        ("applications", Application),
+        ("outreach", Outreach),
+        ("jobs", Job),
+        ("messages", Message),
+    ):
+        rows = session.exec(select(model)).all()
+        counts[key] = len(rows)
+        for row in rows:
+            session.delete(row)
+        session.flush()
+    if from_now:
+        set_state(session, STATE_CURSOR, str(int(datetime.now(timezone.utc).timestamp())))
+    session.commit()
+    return counts
+
+
+def start_gmail_watch() -> dict:
+    """Tell Gmail to ping our Pub/Sub topic when the inbox changes."""
+    settings = get_settings()
+    topic = settings.gmail_pubsub_topic.strip()
+    if not topic:
+        raise RuntimeError("GMAIL_PUBSUB_TOPIC is not set")
+    result = GmailClient(settings).watch_inbox(topic)
+    with session_scope() as session:
+        if result.get("expiration"):
+            set_state(session, STATE_WATCH, str(result["expiration"]))
+        if result.get("historyId"):
+            set_state(session, "gmail_history_id", str(result["historyId"]))
+        session.commit()
+    return result
+
+
+def maybe_renew_watch() -> None:
+    settings = get_settings()
+    if not settings.gmail_pubsub_topic.strip():
+        return
+    with session_scope() as session:
+        raw = get_state(session, STATE_WATCH)
+    if not raw:
+        return
+    try:
+        expires_ms = int(raw)
+    except ValueError:
+        expires_ms = 0
+    # Watch dies after ~7 days. Renew when fewer than 2 days remain.
+    if expires_ms < (time.time() * 1000) + 2 * 86400 * 1000:
+        start_gmail_watch()
+
+
+def watch_expiration_ms(session: Session) -> int | None:
+    raw = get_state(session, STATE_WATCH)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def remember_run(session: Session, stats: RunStats) -> None:
+    payload = {
+        "started_at": stats.started_at,
+        "duration_s": stats.duration_s,
+        "fetched": stats.fetched,
+        "processed": stats.processed,
+        "skipped": stats.skipped,
+        "jobs_matched": stats.jobs_matched,
+        "errors": stats.errors[:20],
+        "emails": stats.emails[:80],
+    }
+    set_state(session, STATE_LAST_RUN, json.dumps(payload))
+
+
+def load_last_run(session: Session) -> dict:
+    raw = get_state(session, STATE_LAST_RUN)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _pointer_job(email: ParsedEmail, candidate: JobCandidate, original: Job) -> Job:
@@ -496,6 +599,17 @@ def run_once(
                 stats.jobs_matched += len(outcome.matched_jobs)
                 stats.categories[category] = stats.categories.get(category, 0) + 1
                 new_jobs.extend(outcome.matched_jobs)
+                stats.emails.append(
+                    {
+                        "id": message_id,
+                        "subject": (email.subject or "")[:140],
+                        "sender": (email.sender_name or email.sender_email or "")[:80],
+                        "category": category,
+                        "jobs_found": outcome.jobs_found,
+                        "jobs_matched": len(outcome.matched_jobs),
+                        "error": "",
+                    }
+                )
                 if category == JOB_ALERT:
                     stats.job_alerts += 1
                 if outcome.application is not None:
@@ -512,6 +626,9 @@ def run_once(
                 session.rollback()
                 log.exception("failed on message %s", message_id)
                 stats.errors.append(f"{message_id}: {exc}")
+                stats.emails.append(
+                    {"id": message_id, "subject": "", "sender": "", "category": "", "jobs_found": 0, "jobs_matched": 0, "error": str(exc)}
+                )
 
         for item in pending_notifications:
             if notifier.outreach(item):
@@ -524,8 +641,13 @@ def run_once(
 
         if latest_epoch:
             set_state(session, STATE_CURSOR, str(latest_epoch))
+        stats.duration_s = round(time.time() - started, 2)
+        remember_run(session, stats)
         session.commit()
 
-    stats.duration_s = round(time.time() - started, 2)
-    log.info("run complete: %s", stats.as_dict())
+    try:
+        maybe_renew_watch()
+    except Exception:
+        log.exception("gmail watch renew failed")
+    log.info("run complete: %s", {k: v for k, v in stats.as_dict().items() if k != "emails"})
     return stats
