@@ -71,15 +71,15 @@ python -m app.run serve               # dashboard at http://localhost:8000
 python -m app.run loop                # poll forever, every 15 min
 ```
 
-The dashboard has five pages:
+The dashboard has these pages:
 
 | Page | What it holds |
 | --- | --- |
-| **Overview** | Category counts for the window, link-fetch results, application pipeline, best matches |
-| **Jobs** | Every posting extracted from alerts. Repeats of the same role are collapsed; toggle between matches only and everything received |
-| **Follow-ups** | Mail an actual person sent you: recruiters, interview scheduling, assessments, offers. Automated senders are filtered out by default |
-| **Applications** | One row per role you applied to, with its status (applied → in review → assessment → interview → offer/rejected) and the mail timeline that moved it |
-| **Mail log** | Every message with the category it was given |
+| **Mail** | Each email in time order, with the jobs and follow-ups from that message |
+| **Matches** | Roles that fit your profile, grouped by day, with the source email |
+| **Follow-ups** | Mail an actual person sent you: recruiters, interview scheduling, assessments, offers |
+| **Applications** | One row per role you applied to, with its status and mail timeline |
+| **Run** | Check Gmail now, or start fresh |
 
 An application appears automatically when a confirmation email arrives ("thank you for applying to
 X at Y"), or the moment you press **applied** on a posting. After that, every interview invite,
@@ -100,11 +100,10 @@ Prints the score breakdown, matched skills, and missing skills so you can calibr
 
 ## Hosting
 
-This app runs on **Google Cloud Run** (dashboard) with **Neon Postgres** and a Gmail push trigger.
-First-time steps: [`docs/deploy.md`](docs/deploy.md).
+This app runs on **Google Cloud Run**. Push to `main` deploys the Docker image. Cloud Scheduler
+checks Gmail every 30 minutes. First-time steps: [`docs/deploy.md`](docs/deploy.md).
 
-Pushing to GitHub does **not** deploy Cloud Run and does **not** update `config/profile.yaml`.
-That file is gitignored. After you edit it locally:
+`config/profile.yaml` is gitignored. After you edit it locally:
 
 ```powershell
 gcloud secrets versions add profile-yaml --data-file=config\profile.yaml

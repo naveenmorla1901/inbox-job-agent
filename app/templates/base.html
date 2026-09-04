@@ -57,6 +57,9 @@
     th { color: var(--muted); font-weight: 500; }
     .u-high { border-left: 3px solid var(--bad); }
     .u-normal { border-left: 3px solid var(--line); }
+    .day-head { color: var(--muted); font-size: 13px; font-weight: 600;
+      letter-spacing: .04em; text-transform: uppercase; margin: 22px 0 10px; }
+    .nested { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
     .joblink { font-size: 12px; color: var(--muted); word-break: break-all; }
     .joblink:hover { color: var(--accent); }
   </style>
@@ -65,16 +68,15 @@
 <header>
   <h1>Inbox Job Agent</h1>
   <nav>
-    <a href="/overview" class="{% if request.url.path == '/overview' %}active{% endif %}">Overview</a>
-    <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Jobs</a>
+    <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Mail</a>
+    <a href="/matches" class="{% if request.url.path == '/matches' %}active{% endif %}">Matches</a>
     <a href="/outreach" class="{% if request.url.path.startswith('/outreach') %}active{% endif %}">
       Follow-ups{% if pending_outreach %}<span class="badge">{{ pending_outreach }}</span>{% endif %}
     </a>
     <a href="/applications" class="{% if request.url.path.startswith('/application') %}active{% endif %}">
       Applications
     </a>
-    <a href="/messages" class="{% if request.url.path == '/messages' %}active{% endif %}">Mail</a>
-    <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}">Inbox</a>
+    <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}">Run</a>
   </nav>
 </header>
 <main>{% block content %}{% endblock %}</main>

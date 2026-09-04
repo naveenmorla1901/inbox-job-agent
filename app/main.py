@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlmodel import Session, and_, col, func, select
+from sqlmodel import Session, col, func, select
 
 from .applications import CLOSED_STATUSES, STATUS_RANK, create_from_job, stale_applications
 from .classify import FOLLOW_UP_KINDS, NOREPLY_RE
@@ -25,7 +25,7 @@ from .pipeline import (
     watch_expiration_ms,
 )
 from .reporting import build_breakdown
-from .timefmt import fmt_et, parse_et_datetime
+from .timefmt import fmt_et, group_by_et_day
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 # httpx logs full request URLs at INFO, which would print API keys carried in query strings.
@@ -80,6 +80,30 @@ def pending_outreach_count(session: Session) -> int:
     ).one()
 
 
+def safe_next(value: str, fallback: str = "/") -> str:
+    if value.startswith("/") and not value.startswith("//"):
+        return value
+    return fallback
+
+
+def mail_bundle(session: Session, days: int, category: str = "") -> tuple[list[Message], dict[str, list[Job]], dict[str, Outreach]]:
+    since = datetime.now(timezone.utc) - timedelta(days=max(1, days))
+    stmt = select(Message).where(Message.received_at >= since)
+    if category:
+        stmt = stmt.where(Message.category == category)
+    messages = session.exec(stmt.order_by(col(Message.received_at).desc()).limit(150)).all()
+    ids = [message.id for message in messages]
+    jobs_by_mail: dict[str, list[Job]] = {}
+    outreach_by_mail: dict[str, Outreach] = {}
+    if ids:
+        jobs = session.exec(select(Job).where(col(Job.message_id).in_(ids))).all()
+        for job in sorted(jobs, key=lambda row: (-(row.score or 0.0), row.id or 0)):
+            jobs_by_mail.setdefault(job.message_id, []).append(job)
+        for item in session.exec(select(Outreach).where(col(Outreach.message_id).in_(ids))).all():
+            outreach_by_mail[item.message_id] = item
+    return messages, jobs_by_mail, outreach_by_mail
+
+
 def require_token(request: Request) -> None:
     if not auth_enabled():
         return
@@ -107,14 +131,50 @@ def login(key: str = Form(...)):
 
 
 @app.get("/", response_class=HTMLResponse)
-def jobs_page(
+def mail_page(
+    request: Request,
+    session: Session = Depends(db_session),
+    days: int = 2,
+    category: str = "",
+    checked: str = "",
+):
+    messages, jobs_by_mail, outreach_by_mail = mail_bundle(session, days=days, category=category)
+    matched_by_mail = {
+        message_id: sum(1 for job in rows if job.matched)
+        for message_id, rows in jobs_by_mail.items()
+    }
+    flash = ""
+    if checked:
+        last = load_last_run(session)
+        flash = (
+            f"Checked {last.get('fetched', 0)} email(s). "
+            f"Analyzed {last.get('processed', 0)} new."
+        )
+    return templates.TemplateResponse(
+        request,
+        "mail.html",
+        {
+            "messages": messages,
+            "day_groups": group_by_et_day(messages),
+            "jobs_by_mail": jobs_by_mail,
+            "matched_by_mail": matched_by_mail,
+            "outreach_by_mail": outreach_by_mail,
+            "days": days,
+            "category": category,
+            "flash": flash,
+            "pending_outreach": pending_outreach_count(session),
+        },
+    )
+
+
+@app.get("/matches", response_class=HTMLResponse)
+def matches_page(
     request: Request,
     session: Session = Depends(db_session),
     status: str = "new",
     q: str = "",
-    days: int = 30,
+    days: int = 7,
     min_score: float | None = None,
-    sort: str = "score",
     show: str = "matched",
     duplicates: str = "hide",
 ):
@@ -136,20 +196,22 @@ def jobs_page(
             | func.lower(Job.company).like(like)
             | func.lower(Job.description).like(like)
         )
-    order = col(Job.score).desc() if sort == "score" else col(Job.received_at).desc()
-    jobs = session.exec(stmt.order_by(order).limit(300)).all()
-
-    pending_outreach = pending_outreach_count(session)
+    jobs = session.exec(stmt.order_by(col(Job.received_at).desc(), col(Job.score).desc()).limit(300)).all()
+    mail_ids = {job.message_id for job in jobs}
+    messages_by_id = {}
+    if mail_ids:
+        for message in session.exec(select(Message).where(col(Message.id).in_(list(mail_ids)))).all():
+            messages_by_id[message.id] = message
 
     return templates.TemplateResponse(
         request,
         "jobs.html",
         {
-            "jobs": jobs,
+            "day_groups": group_by_et_day(jobs),
+            "messages_by_id": messages_by_id,
             "status": status,
             "q": q,
             "days": days,
-            "sort": sort,
             "show": show,
             "duplicates": duplicates,
             "duplicate_count": session.exec(
@@ -158,7 +220,7 @@ def jobs_page(
                 .where(Job.duplicate_of != None, Job.received_at >= since)  # noqa: E711
             ).one(),
             "min_score": threshold,
-            "pending_outreach": pending_outreach,
+            "pending_outreach": pending_outreach_count(session),
             "profile": get_profile(),
         },
     )
@@ -231,8 +293,13 @@ def activity_page(
 
 
 @app.post("/activity/check")
-def activity_check(request: Request, session: Session = Depends(db_session)):
+def activity_check(
+    request: Request,
+    session: Session = Depends(db_session),
+    next: str = Form("/"),
+):
     require_token(request)
+    dest = safe_next(next, "/")
     try:
         run_once()
     except Exception as exc:
@@ -243,7 +310,8 @@ def activity_check(request: Request, session: Session = Depends(db_session)):
             _activity_context(session, error=str(exc)),
             status_code=500,
         )
-    return RedirectResponse("/activity?checked=1", status_code=303)
+    sep = "&" if "?" in dest else "?"
+    return RedirectResponse(f"{dest}{sep}checked=1", status_code=303)
 
 
 @app.post("/activity/reset")
@@ -294,7 +362,7 @@ def set_job_status(
     job_id: int,
     request: Request,
     status: str = Form(...),
-    redirect: str = Form("/"),
+    redirect: str = Form("/matches"),
     session: Session = Depends(db_session),
 ):
     require_token(request)
@@ -429,94 +497,17 @@ def mark_handled(
 
 
 @app.get("/preview", response_class=HTMLResponse)
-def preview_page(
-    request: Request,
-    session: Session = Depends(db_session),
-    hours: int = 1,
-    start: str = "",
-    end: str = "",
-):
-    """Temporary extract review. Remove once you trust the pipeline."""
-    hours = max(1, min(hours, 48))
-    start_at = parse_et_datetime(start)
-    end_at = parse_et_datetime(end)
-    if start_at and end_at and end_at > start_at:
-        since, until = start_at, end_at
-        mail_filter = and_(Message.received_at >= since, Message.received_at < until)
-        job_filter = and_(Job.received_at >= since, Job.received_at < until)
-        outreach_filter = and_(Outreach.received_at >= since, Outreach.received_at < until)
-    else:
-        until = None
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
-        mail_filter = Message.received_at >= since
-        job_filter = Job.received_at >= since
-        outreach_filter = Outreach.received_at >= since
-
-    messages = session.exec(
-        select(Message).where(mail_filter).order_by(col(Message.received_at).desc())
-    ).all()
-    jobs = session.exec(select(Job).where(job_filter).order_by(col(Job.score).desc())).all()
-    outreach = session.exec(
-        select(Outreach).where(outreach_filter).order_by(col(Outreach.received_at).desc())
-    ).all()
-    jobs_by_mail: dict[str, list[Job]] = {}
-    for job in jobs:
-        jobs_by_mail.setdefault(job.message_id, []).append(job)
-    outreach_by_mail = {item.message_id: item for item in outreach}
-    categories: dict[str, int] = {}
-    for message in messages:
-        categories[message.category] = categories.get(message.category, 0) + 1
-    scrape: dict[str, int] = {}
-    for job in jobs:
-        scrape[job.scrape_status or "unknown"] = scrape.get(job.scrape_status or "unknown", 0) + 1
-    return templates.TemplateResponse(
-        request,
-        "preview.html",
-        {
-            "hours": hours,
-            "since": since,
-            "until": until,
-            "start": start,
-            "end": end,
-            "messages": messages,
-            "jobs": jobs,
-            "outreach": outreach,
-            "jobs_by_mail": jobs_by_mail,
-            "outreach_by_mail": outreach_by_mail,
-            "categories": categories,
-            "scrape": scrape,
-            "matched": sum(1 for job in jobs if job.matched),
-            "ignored": sum(1 for job in jobs if not job.matched),
-        },
-    )
+def preview_page(days: int = 1, hours: int = 0):
+    lookback = days if hours <= 0 else max(1, (hours + 23) // 24)
+    return RedirectResponse(f"/?days={lookback}", status_code=302)
 
 
 @app.get("/messages", response_class=HTMLResponse)
-def messages_page(
-    request: Request,
-    session: Session = Depends(db_session),
-    limit: int = 100,
-    category: str = "",
-    email_type: str = "",
-    days: int = 30,
-):
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    stmt = select(Message).where(Message.received_at >= since)
+def messages_page(days: int = 2, category: str = ""):
+    qs = f"days={days}"
     if category:
-        stmt = stmt.where(Message.category == category)
-    if email_type:
-        stmt = stmt.where(Message.email_type == email_type)
-    messages = session.exec(stmt.order_by(col(Message.received_at).desc()).limit(limit)).all()
-    return templates.TemplateResponse(
-        request,
-        "messages.html",
-        {
-            "messages": messages,
-            "category": category,
-            "email_type": email_type,
-            "days": days,
-        },
-    )
+        qs += f"&category={category}"
+    return RedirectResponse(f"/?{qs}", status_code=302)
 
 
 @app.get("/api/jobs")

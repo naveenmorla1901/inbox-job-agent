@@ -1,0 +1,64 @@
+name: Deploy Cloud Run
+
+# Push to main builds the Dockerfile and updates the live service.
+# One-time secrets: GCP_SA_KEY, API_TOKEN (see docs/deploy.md).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PROJECT: inbox-job-agent
+      REGION: us-east1
+      SERVICE: inbox-job-agent
+      RUN_URL: https://inbox-job-agent-244210842384.us-east1.run.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy
+        run: |
+          gcloud config set project "$PROJECT"
+          gcloud run deploy "$SERVICE" \
+            --source . \
+            --region "$REGION" \
+            --quiet
+
+      - name: Poll Gmail every 30 minutes
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${API_TOKEN:-}" ]; then
+            echo "API_TOKEN secret missing; skip scheduler"
+            exit 0
+          fi
+          URI="$RUN_URL/api/run"
+          if gcloud scheduler jobs describe inbox-job-agent-poll --location="$REGION" >/dev/null 2>&1; then
+            gcloud scheduler jobs update http inbox-job-agent-poll \
+              --location "$REGION" \
+              --schedule "*/30 * * * *" \
+              --time-zone "America/New_York" \
+              --uri "$URI" \
+              --update-headers "x-api-token=${API_TOKEN}" \
+              --attempt-deadline 900s
+          else
+            gcloud scheduler jobs create http inbox-job-agent-poll \
+              --location "$REGION" \
+              --schedule "*/30 * * * *" \
+              --time-zone "America/New_York" \
+              --uri "$URI" \
+              --http-method POST \
+              --headers "x-api-token=${API_TOKEN}" \
+              --attempt-deadline 900s
+          fi

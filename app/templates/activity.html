@@ -1,23 +1,17 @@
 {% extends "base.html" %}
-{% block title %}Inbox — Inbox Job Agent{% endblock %}
+{% block title %}Run — Inbox Job Agent{% endblock %}
 {% block content %}
 {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
 {% if error %}<div class="flash bad">{{ error }}</div>{% endif %}
 
 <div class="card">
-  <h3>Inbox</h3>
+  <h3>Run</h3>
   <p class="meta" style="margin:8px 0 14px">
-    Each new email is read one at a time: classify it, pull job links, score them against your profile.
-    Your Gmail is not changed.
+    Cloud Scheduler checks Gmail every 30 minutes. Each run only reads new mail, one email at a time.
+    Pushing to GitHub <code>main</code> deploys the Docker image. Your Gmail is not changed.
   </p>
   <div class="chips">
-    {% if watching %}
-    <span class="chip on">watching for new mail{% if watch_until %} until {{ watch_until }}{% endif %}</span>
-    {% elif topic_ready %}
-    <span class="chip">trigger is off</span>
-    {% else %}
-    <span class="chip">manual + scheduled checks</span>
-    {% endif %}
+    <span class="chip on">every 30 minutes</span>
     {% if last_run.started_at %}
     <span class="chip">last check {{ last_run.started_at[:16] }} UTC</span>
     <span class="chip">{{ last_run.processed|default(0) }} analyzed</span>
@@ -28,13 +22,9 @@
   </div>
   <div class="actions">
     <form method="post" action="/activity/check" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Checking…'">
-      <button type="submit" class="primary">Check new mail</button>
+      <input type="hidden" name="next" value="/activity">
+      <button type="submit" class="primary">Check now</button>
     </form>
-    {% if topic_ready and not watching %}
-    <form method="post" action="/activity/watch">
-      <button type="submit">Turn on new-mail trigger</button>
-    </form>
-    {% endif %}
     <form method="post" action="/activity/reset" onsubmit="return confirm('Clear every job and email this app saved? Gmail is not touched. Only mail that arrives after this moment will be analyzed.')">
       <button type="submit" class="danger">Start fresh</button>
     </form>
@@ -43,7 +33,7 @@
 
 {% if last_run.emails %}
 <div class="card">
-  <h3>Last check — each email</h3>
+  <h3>Last check</h3>
   <table>
     <tr>
       <th>From</th>

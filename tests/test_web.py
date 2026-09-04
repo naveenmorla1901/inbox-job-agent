@@ -13,6 +13,7 @@ from app.llm import LLM
 from app.main import app
 from app.models import Job, Message
 from app.pipeline import STATE_CURSOR, process_email
+from app.timefmt import et_day_label, group_by_et_day
 from tests.test_extract import alert_email
 
 
@@ -46,13 +47,40 @@ def test_api_docs_is_gone(client):
     assert test_client.get("/openapi.json").status_code == 404
 
 
-def test_inbox_page_replaces_swagger(client):
+def test_run_page_is_simple(client):
     test_client, _engine = client
     response = test_client.get("/activity")
     assert response.status_code == 200
-    assert b"Check new mail" in response.content
-    assert b"Start fresh" in response.content
-    assert b"/api/docs" not in response.content
+    assert b"Check now" in response.content
+    assert b"every 30 minutes" in response.content
+    assert b"Turn on new-mail trigger" not in response.content
+
+
+def test_mail_page_bundles_jobs_under_the_email(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        process_email(session, alert_email(), LLM())
+        session.commit()
+
+    response = test_client.get("/?days=30")
+    assert response.status_code == 200
+    body = response.content
+    assert b"8 new jobs match your preferences" in body or b"jobs match" in body.lower()
+    assert b"Data Scientist" in body or b"Machine Learning" in body
+    assert b"Mail" in body
+    assert b"/api/docs" not in body
+
+
+def test_matches_page_groups_by_day_and_shows_source_mail(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        process_email(session, alert_email(), LLM())
+        session.commit()
+
+    response = test_client.get("/matches?days=30&show=all&status=all")
+    assert response.status_code == 200
+    assert b"from" in response.content
+    assert test_client.get("/messages").status_code in (200, 302)
 
 
 def test_start_fresh_clears_rows_and_sets_cursor(client):
@@ -87,3 +115,19 @@ def test_parse_gmail_push_reads_history():
     assert parse_gmail_push(body) == payload
     assert parse_gmail_push({}) == {}
     assert parse_gmail_push({"message": {}}) == {}
+
+
+def test_group_by_et_day_keeps_order():
+    class Row:
+        def __init__(self, when):
+            self.received_at = when
+
+    from datetime import datetime, timezone
+
+    a = Row(datetime(2026, 9, 3, 22, 0, tzinfo=timezone.utc))
+    b = Row(datetime(2026, 9, 3, 10, 0, tzinfo=timezone.utc))
+    c = Row(datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc))
+    groups = group_by_et_day([a, b, c])
+    assert [label for label, _ in groups][0] == et_day_label(a.received_at)
+    assert len(groups[0][1]) == 2
+    assert len(groups[1][1]) == 1

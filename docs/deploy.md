@@ -2,11 +2,10 @@
 
 You already run this app on your laptop against **the same Gmail inbox**. Hosting it means:
 
-1. Google builds the **existing Dockerfile** in the cloud (you do not install Docker Desktop).
+1. Google builds the **existing Dockerfile** (you do not install Docker Desktop).
 2. The container stays at a public URL (the dashboard).
 3. Every 30 minutes Cloud Scheduler calls `POST /api/run`, which reads that same Gmail.
-
-GitHub merge does **not** deploy this. You deploy from this folder with `gcloud`.
+4. After a one-time GitHub secret setup, **push to `main`** deploys the same Docker image.
 
 | Piece | Where | What it does |
 | --- | --- | --- |
@@ -242,47 +241,24 @@ Leave `GMAIL_TOKEN_JSON` and `PROFILE_YAML` as secrets from step 7.
 
 1. Open the Cloud Run URL.
 2. Log in with the dashboard password (`API_TOKEN`).
-3. Open **Inbox**. Use **Start fresh** if you want an empty database (Gmail is not touched). Use **Check new mail** to analyze the inbox one email at a time.
+3. **Mail** is the home page: each email, newest first, with its jobs and follow-ups underneath.
+4. **Matches** is the same roles grouped by day.
+5. **Run** has **Check now** and **Start fresh**. Start fresh does not touch Gmail.
 
-The Jobs page starts empty until a check runs. That is Neon, not your laptop SQLite.
+The first Mail page can be empty until a check runs. That is Neon, not your laptop SQLite.
 
 ---
 
-## Step 10 — Trigger on each new email
+## Step 10 — Check Gmail every 30 minutes
 
-Gmail tells Google Pub/Sub when the inbox changes. Pub/Sub calls `/api/gmail-push`. The app then reads **only new** messages, one by one.
+This is the whole schedule. No Pub/Sub. Cloud Scheduler calls `POST /api/run`.
 
-Replace `YOUR_API_TOKEN` with the dashboard password. The service URL is the one `gcloud run deploy` printed.
-
-```powershell
-gcloud services enable pubsub.googleapis.com gmail.googleapis.com
-
-gcloud pubsub topics create gmail-inbox
-
-gcloud pubsub topics add-iam-policy-binding gmail-inbox `
-  --member="serviceAccount:gmail-api-push@system.gserviceaccount.com" `
-  --role="roles/pubsub.publisher"
-
-gcloud pubsub subscriptions create gmail-inbox-push `
-  --topic gmail-inbox `
-  --push-endpoint "https://inbox-job-agent-244210842384.us-east1.run.app/api/gmail-push?key=YOUR_API_TOKEN" `
-  --ack-deadline 600
-```
-
-Add the topic name on the Cloud Run service (console → **inbox-job-agent** → **Edit & deploy new revision** → **Variables & secrets**):
-
-| Name | Value |
-| --- | --- |
-| `GMAIL_PUBSUB_TOPIC` | `projects/inbox-job-agent/topics/gmail-inbox` |
-
-Deploy that revision. Then open **Inbox** and click **Turn on new-mail trigger**.
-
-A backup check every 10 minutes covers a missed push:
+Replace `YOUR_API_TOKEN` with the dashboard password:
 
 ```powershell
 gcloud scheduler jobs create http inbox-job-agent-poll `
   --location us-east1 `
-  --schedule "*/10 * * * *" `
+  --schedule "*/30 * * * *" `
   --time-zone "America/New_York" `
   --uri "https://inbox-job-agent-244210842384.us-east1.run.app/api/run" `
   --http-method POST `
@@ -290,28 +266,75 @@ gcloud scheduler jobs create http inbox-job-agent-poll `
   --attempt-deadline 900s
 ```
 
-GitHub Actions polling stays **off**. Do not turn it back on while this trigger is running.
+If the job already exists:
+
+```powershell
+gcloud scheduler jobs update http inbox-job-agent-poll `
+  --location us-east1 `
+  --schedule "*/30 * * * *" `
+  --update-headers "x-api-token=YOUR_API_TOKEN"
+```
+
+After GitHub deploy is connected (next section), this job is created or updated automatically.
 
 ---
 
-## After you change code later
+## Step 11 — Push to GitHub deploys Cloud Run (once)
 
-Merging on GitHub still does nothing to Cloud Run. From this folder, on `main`:
+GitHub Actions builds the same Dockerfile and runs `gcloud run deploy --source .`. You do this setup **once**.
+
+### 1. Service account
 
 ```powershell
-git checkout main
-git pull origin main
-gcloud run deploy inbox-job-agent --source . --region us-east1
+gcloud iam service-accounts create github-deploy --display-name="GitHub Cloud Run deploy"
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
+  --role="roles/run.admin"
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
+  --role="roles/iam.serviceAccountUser"
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
+  --role="roles/cloudbuild.builds.editor"
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
+  --role="roles/artifactregistry.admin"
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
+  --role="roles/storage.admin"
+
+gcloud projects add-iam-policy-binding inbox-job-agent `
+  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
+  --role="roles/cloudscheduler.admin"
+
+gcloud iam service-accounts keys create "$env:TEMP\github-deploy.json" `
+  --iam-account=github-deploy@inbox-job-agent.iam.gserviceaccount.com
 ```
 
-If you edited `config\profile.yaml` or re-ran Gmail login:
+### 2. GitHub secrets
+
+Repo → **Settings → Secrets and variables → Actions → New repository secret**:
+
+| Name | Value |
+| --- | --- |
+| `GCP_SA_KEY` | entire contents of `$env:TEMP\github-deploy.json` |
+| `API_TOKEN` | the same dashboard password Cloud Run already uses |
+
+Delete the JSON file after you paste it.
+
+### 3. After that
+
+Every push (or merge) to **`main`** deploys. Profile and Gmail token stay in Secret Manager — they are not in git. To update the profile:
 
 ```powershell
 gcloud secrets versions add profile-yaml --data-file=config\profile.yaml
-gcloud secrets versions add gmail-token --data-file=secrets\token.json
+gcloud run services update inbox-job-agent --region us-east1 --update-secrets PROFILE_YAML=profile-yaml:latest
 ```
-
-Then deploy again (or wait — new secret versions are used on the next revision; a deploy picks them up if the service is bound to `latest`).
 
 ---
 
@@ -322,10 +345,9 @@ Then deploy again (or wait — new secret versions are used on the next revision
 | Deploy asks for billing | Step 2: link a billing account |
 | `gcloud` is not recognized | Reopen PowerShell after installing the SDK |
 | Secret permission error | Step 7 IAM binding with **project number** |
-| Login page, then empty jobs | Neon URL missing or still on SQLite default |
+| Login page, then empty mail | Neon URL missing or still on SQLite default |
 | `invalid_grant` / Gmail auth error | Re-run `python -m app.auth_setup` locally, then update `gmail-token` |
 | Token dies after a week | Publish the OAuth consent screen (not Testing) |
 | 401 on `/api/run` | Scheduler header `x-api-token` does not match `API_TOKEN` |
-| Site works, no new mail | Trigger not turned on, or Gmail query too narrow |
-
-Do not add a GitHub Actions poller while Cloud Run is processing mail, or you will double-process.
+| Site works, no new mail | Scheduler missing, or Gmail query too narrow |
+| GitHub deploy fails on auth | `GCP_SA_KEY` secret missing or not the JSON key file |

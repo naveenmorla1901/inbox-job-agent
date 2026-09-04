@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Mail — Inbox Job Agent{% endblock %}
+{% block content %}
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+<div class="filters">
+  <form method="get" action="/" style="display:flex;gap:10px;flex-wrap:wrap">
+    <select name="days">
+      {% for option in [1, 2, 3, 7, 14, 30] %}
+      <option value="{{ option }}" {% if days == option %}selected{% endif %}>last {{ option }} day{{ "s" if option > 1 else "" }}</option>
+      {% endfor %}
+    </select>
+    <select name="category">
+      <option value="" {% if not category %}selected{% endif %}>all mail</option>
+      {% for option in ["job_alert", "recruiter_outreach", "interview_invite", "assessment", "next_step", "offer", "rejection", "application_update", "other"] %}
+      <option value="{{ option }}" {% if category == option %}selected{% endif %}>{{ option.replace("_", " ") }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Show</button>
+  </form>
+  <form method="post" action="/activity/check" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Checking…'">
+    <input type="hidden" name="next" value="/">
+    <button type="submit" class="primary">Check new mail</button>
+  </form>
+</div>
+
+{% if not messages %}
+<p class="empty">No mail in this window. It checks Gmail every 30 minutes, or click Check new mail.</p>
+{% endif %}
+
+{% for day, rows in day_groups %}
+<h2 class="day-head">{{ day }}</h2>
+{% for message in rows %}
+{% set jobs = jobs_by_mail.get(message.id, []) %}
+{% set item = outreach_by_mail.get(message.id) %}
+<div class="card">
+  <div class="row">
+    <div>
+      <h3>
+        <a href="https://mail.google.com/mail/u/0/#inbox/{{ message.id }}" target="_blank" rel="noopener">
+          {{ message.subject[:90] or "(no subject)" }}
+        </a>
+      </h3>
+      <div class="meta">
+        <span class="chip">{{ message.category.replace("_", " ") }}</span>
+        {% if message.email_type %}<span class="chip">{{ message.email_type }}</span>{% endif %}
+        <span>{{ message.sender }}</span>
+        <span>· {{ message.received_at | et("%I:%M %p ET") }}</span>
+        {% if jobs %}
+        <span>· {{ matched_by_mail.get(message.id, 0) }}/{{ jobs|length }} roles match</span>
+        {% elif message.jobs_found %}
+        <span>· {{ message.jobs_matched }}/{{ message.jobs_found }} roles match</span>
+        {% endif %}
+      </div>
+      {% if message.summary %}<p style="margin:8px 0 0">{{ message.summary }}</p>{% endif %}
+    </div>
+  </div>
+
+  {% if item %}
+  <div class="nested">
+    <span class="chip on">{{ item.kind.replace("_", " ") }}</span>
+    <span>{{ item.person }}{% if item.company %} · {{ item.company }}{% endif %}{% if item.role %} · {{ item.role }}{% endif %}</span>
+    {% if item.action_required %}<div class="meta">{{ item.action_required }}</div>{% endif %}
+    <div class="actions">
+      <a href="/outreach">open follow-ups</a>
+      {% if item.scheduling_url %}<a href="{{ item.scheduling_url }}" target="_blank" rel="noopener">schedule</a>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% for job in jobs %}
+  <div class="nested">
+    <div class="row">
+      <div>
+        <b><a href="/job/{{ job.id }}">{{ job.title or "Untitled role" }}</a></b>
+        <div class="meta">
+          <span>{{ job.company or job.source }}</span>
+          {% if job.location %}<span>· {{ job.location }}</span>{% endif %}
+          <span>· {{ job.source }}</span>
+          {% if job.matched %}<span class="chip on">match</span>{% else %}<span class="chip">ignored</span>{% endif %}
+        </div>
+        <div class="meta"><a href="{{ job.url }}" target="_blank" rel="noopener" class="joblink">{{ job.url }}</a></div>
+      </div>
+      <div class="score {% if job.score >= 0.7 %}s-hi{% elif job.score >= 0.55 %}s-mid{% else %}s-lo{% endif %}">
+        {{ "%.2f"|format(job.score) }}
+      </div>
+    </div>
+    <div class="actions">
+      <a href="{{ job.url }}" target="_blank" rel="noopener">open posting</a>
+      {% for action in ["saved", "applied", "ignored", "new"] if action != job.status %}
+      <form method="post" action="/job/{{ job.id }}/status">
+        <input type="hidden" name="status" value="{{ action }}">
+        <input type="hidden" name="redirect" value="/?days={{ days }}{% if category %}&category={{ category }}{% endif %}">
+        <button type="submit">{{ action }}</button>
+      </form>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endfor %}
+{% endblock %}

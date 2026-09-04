@@ -250,16 +250,16 @@ Repo → **Settings → Secrets and variables → Actions**:
 
 Variables tab: `LLM_PROVIDER=gemini`, optionally `MIN_JOB_SCORE`, `GMAIL_QUERY`.
 
-**Verify:** Actions tab → **poll-inbox** is idle. No new emails from GitHub Actions.
+**Verify:** GitHub Actions should not poll Gmail. The Cloud Run scheduler does that every 30 minutes.
 
 ---
 
 ## Step 8 — Cloud Run (the dashboard)
 
 The live site is Google Cloud Run. Full first-time steps: [`deploy.md`](deploy.md).
+Pushing to **`main`** deploys the Docker image (after the one-time GitHub secrets in deploy.md).
 
-Pushing to GitHub does **not** update Cloud Run or your profile. After you edit
-`config/profile.yaml` locally:
+`config/profile.yaml` is not in git. After you edit it locally:
 
 ```powershell
 gcloud secrets versions add profile-yaml --data-file=config\profile.yaml
