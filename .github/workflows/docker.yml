@@ -1,0 +1,15 @@
+name: Docker image
+
+# Prove the same Dockerfile Cloud Run uses will build. Deploy is Cloud Build on GCP,
+# not this workflow — no Google key in GitHub.
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build image
+        run: docker build -t inbox-job-agent:ci .
