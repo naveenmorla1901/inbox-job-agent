@@ -5,7 +5,7 @@ You already run this app on your laptop against **the same Gmail inbox**. Hostin
 1. Google builds the **existing Dockerfile** (you do not install Docker Desktop).
 2. The container stays at a public URL (the dashboard).
 3. Every 30 minutes Cloud Scheduler calls `POST /api/run`, which reads that same Gmail.
-4. After a one-time GitHub secret setup, **push to `main`** deploys the same Docker image.
+4. After a one-time **Connect GitHub** in Cloud Run, each push to `main` builds that Docker image and deploys it. Secrets stay in GCP — GitHub does not need a Google key.
 
 | Piece | Where | What it does |
 | --- | --- | --- |
@@ -275,61 +275,77 @@ gcloud scheduler jobs update http inbox-job-agent-poll `
   --update-headers "x-api-token=YOUR_API_TOKEN"
 ```
 
-After GitHub deploy is connected (next section), this job is created or updated automatically.
+After GitHub is connected in Cloud Run (next section), each push to `main` rebuilds the Docker image. The 30-minute poller is separate and already lives in GCP.
 
 ---
 
-## Step 11 — Push to GitHub deploys Cloud Run (once)
+## Step 11 — Push to GitHub deploys the Docker image (once)
 
-GitHub Actions builds the same Dockerfile and runs `gcloud run deploy --source .`. You do this setup **once**.
+Do **not** put a Google key in GitHub. Secrets already on Cloud Run stay there.
 
-### 1. Service account
+You have **two logins**. Keep both. Do not try to make them the same.
+
+| Where | Account | What it is |
+| --- | --- | --- |
+| Google Cloud | `naveen.morla04@gmail.com` | Project `inbox-job-agent`, Cloud Run, secrets |
+| GitHub | user **`naveenmorla1901`** | Repo `inbox-job-agent` |
+
+Google Cloud never “sees” the GitHub email. It only needs you to **install Google’s GitHub app** on the GitHub user that **owns the repo**. That is a popup. In that popup you must be `naveenmorla1901`, not the GCP Gmail.
+
+### A. Before you click anything
+
+1. Open a **new Incognito / InPrivate window** (stops Chrome from using the wrong GitHub login).
+2. In that window, open [github.com](https://github.com) and sign in as **`naveenmorla1901`**. Confirm you can open [github.com/naveenmorla1901/inbox-job-agent](https://github.com/naveenmorla1901/inbox-job-agent).
+3. Leave that GitHub tab signed in. Do not log in to GitHub as `naveen.morla04@gmail.com` in this window.
+
+### B. Cloud Run (still your GCP Gmail)
+
+1. In the **same Incognito window**, open [console.cloud.google.com](https://console.cloud.google.com) and sign in as **`naveen.morla04@gmail.com`**.
+2. Top bar project: **inbox-job-agent**.
+3. Open [Cloud Run → inbox-job-agent](https://console.cloud.google.com/run/detail/us-east1/inbox-job-agent?project=inbox-job-agent).
+4. Click **Set up continuous deployment**. If you do not see it: the three-dot menu on the service, or **Edit & deploy new revision** is the wrong button — look for **Set up continuous deployment** / **Connect repository**.
+5. If it asks Cloud Build vs Developer Connect, pick **Developer Connect** or **Cloud Build** (either works). Click **Connect** / **Authenticate**.
+
+### C. The GitHub popup (this is the confusing part)
+
+Google opens a GitHub window. Look at the **GitHub username in the top-right**. It must say **`naveenmorla1901`**.
+
+- If it shows some other user, or a GitHub account created from `naveen.morla04@gmail.com`: click **Install the GitHub App on another GitHub account** (wording may be **Switch account**). Sign in as **`naveenmorla1901`**.
+- Choose **Only select repositories** → pick **`inbox-job-agent`** only.
+- Click green **Install** / **Authorize**.
+
+Back in Cloud Run you should now see repository **`naveenmorla1901/inbox-job-agent`**. If the repo list is empty, you installed the app on the wrong GitHub user. Repeat C.
+
+### D. Finish the form
+
+| Field | Value |
+| --- | --- |
+| Repository | `naveenmorla1901/inbox-job-agent` |
+| Branch | `main` (or `^main$`) |
+| Build type | **Dockerfile**, or **Cloud Build configuration file** `/cloudbuild.yaml` |
+| Source directory | `/` (leave default) |
+
+Save. Do not change env vars or secrets on this screen if it shows them.
+
+### E. Check it worked
+
+1. Cloud Run service page → **Revisions**: a new revision after the next push to `main`.
+2. Or Cloud Build → **History**: a green build.
+
+You can delete GitHub secrets `GCP_SA_KEY` and `API_TOKEN`. They are not used for this.
+
+If the repo still does not appear: GitHub → your user **`naveenmorla1901`** → **Settings** → **Applications** → **Installed GitHub Apps** → Google Cloud Build or Developer Connect → **Configure** → grant **`inbox-job-agent`**.
+
+### Same image on this PC
 
 ```powershell
-gcloud iam service-accounts create github-deploy --display-name="GitHub Cloud Run deploy"
-
-gcloud projects add-iam-policy-binding inbox-job-agent `
-  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
-  --role="roles/run.admin"
-
-gcloud projects add-iam-policy-binding inbox-job-agent `
-  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
-  --role="roles/iam.serviceAccountUser"
-
-gcloud projects add-iam-policy-binding inbox-job-agent `
-  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
-  --role="roles/cloudbuild.builds.editor"
-
-gcloud projects add-iam-policy-binding inbox-job-agent `
-  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
-  --role="roles/artifactregistry.admin"
-
-gcloud projects add-iam-policy-binding inbox-job-agent `
-  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
-  --role="roles/storage.admin"
-
-gcloud projects add-iam-policy-binding inbox-job-agent `
-  --member="serviceAccount:github-deploy@inbox-job-agent.iam.gserviceaccount.com" `
-  --role="roles/cloudscheduler.admin"
-
-gcloud iam service-accounts keys create "$env:TEMP\github-deploy.json" `
-  --iam-account=github-deploy@inbox-job-agent.iam.gserviceaccount.com
+docker build -t inbox-job-agent .
+docker run --rm -p 8080:8080 -e PORT=8080 -e API_TOKEN=dev inbox-job-agent
 ```
 
-### 2. GitHub secrets
+Open http://localhost:8080 — that is the Cloud Run container, locally.
 
-Repo → **Settings → Secrets and variables → Actions → New repository secret**:
-
-| Name | Value |
-| --- | --- |
-| `GCP_SA_KEY` | entire contents of `$env:TEMP\github-deploy.json` |
-| `API_TOKEN` | the same dashboard password Cloud Run already uses |
-
-Delete the JSON file after you paste it.
-
-### 3. After that
-
-Every push (or merge) to **`main`** deploys. Profile and Gmail token stay in Secret Manager — they are not in git. To update the profile:
+Profile still is not in git. After you edit `config\profile.yaml`:
 
 ```powershell
 gcloud secrets versions add profile-yaml --data-file=config\profile.yaml
@@ -350,4 +366,5 @@ gcloud run services update inbox-job-agent --region us-east1 --update-secrets PR
 | Token dies after a week | Publish the OAuth consent screen (not Testing) |
 | 401 on `/api/run` | Scheduler header `x-api-token` does not match `API_TOKEN` |
 | Site works, no new mail | Scheduler missing, or Gmail query too narrow |
-| GitHub deploy fails on auth | `GCP_SA_KEY` secret missing or not the JSON key file |
+| GitHub connect does not list the repo | You authorized the GitHub user for the GCP Gmail. Install the app on **`naveenmorla1901`**. Use Incognito. Click **Install on another GitHub account**. |
+| GitHub “Node.js 20 is deprecated” | Harmless warning. The Docker workflow does not use that Google action. |

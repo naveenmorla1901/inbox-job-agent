@@ -257,7 +257,7 @@ Variables tab: `LLM_PROVIDER=gemini`, optionally `MIN_JOB_SCORE`, `GMAIL_QUERY`.
 ## Step 8 — Cloud Run (the dashboard)
 
 The live site is Google Cloud Run. Full first-time steps: [`deploy.md`](deploy.md).
-Pushing to **`main`** deploys the Docker image (after the one-time GitHub secrets in deploy.md).
+Connect GitHub once in the Cloud Run console (Dockerfile / `cloudbuild.yaml`). Secrets stay in GCP.
 
 `config/profile.yaml` is not in git. After you edit it locally:
 

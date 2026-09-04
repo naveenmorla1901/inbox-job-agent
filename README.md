@@ -100,8 +100,15 @@ Prints the score breakdown, matched skills, and missing skills so you can calibr
 
 ## Hosting
 
-This app runs on **Google Cloud Run**. Push to `main` deploys the Docker image. Cloud Scheduler
-checks Gmail every 30 minutes. First-time steps: [`docs/deploy.md`](docs/deploy.md).
+This app runs on **Google Cloud Run**. Google Cloud Build builds the Docker image on each push
+to `main`. Secrets stay in GCP. First-time steps: [`docs/deploy.md`](docs/deploy.md).
+
+Test the same image locally:
+
+```powershell
+docker build -t inbox-job-agent .
+docker run --rm -p 8080:8080 -e PORT=8080 -e API_TOKEN=dev inbox-job-agent
+```
 
 `config/profile.yaml` is gitignored. After you edit it locally:
 
