@@ -285,7 +285,7 @@ gcloud run services update inbox-job-agent --region us-east1 --update-secrets PR
 | Symptom | Cause and fix |
 | --- | --- |
 | `invalid_grant` after a week | OAuth app still in *Testing*. Publish it (step 1b.6) and re-run `app.auth_setup`. |
-| `No Gmail token found` | `secrets/token.json` missing, or `GMAIL_TOKEN_JSON` not set on the host. |
+| `No Gmail token found` | On Cloud Run you opened `inbox-job-agent-git` (europe-west1) or `GMAIL_TOKEN_JSON` is not attached. Use `inbox-job-agent` in us-east1. On a laptop, `secrets/token.json` is missing. |
 | `insufficient permission` when labelling | `GMAIL_APPLY_LABEL=true` needs the `gmail.modify` scope — re-run `app.auth_setup`. |
 | Poll returns 0 messages | `GMAIL_QUERY` too narrow, or everything already processed. Use `poll --days 3`. |
 | Jobs saved with `scrape_status=blocked` | The board refused the fetch (Indeed does this often). The email's own summary is used instead, and Gemini fills the gaps. |

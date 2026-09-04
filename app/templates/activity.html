@@ -19,6 +19,14 @@
     {% else %}
     <span class="chip">no check yet</span>
     {% endif %}
+    {% if host_setup.on_cloud %}
+    <span class="chip {% if host_setup.gmail_ok %}on{% endif %}">
+      Gmail token {% if host_setup.gmail_ok %}attached{% else %}missing{% endif %}
+    </span>
+    <span class="chip {% if host_setup.postgres %}on{% endif %}">
+      {% if host_setup.postgres %}Neon Postgres{% else %}SQLite (will wipe on sleep){% endif %}
+    </span>
+    {% endif %}
   </div>
   <div class="actions">
     <form method="post" action="/activity/check" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Checking…'">

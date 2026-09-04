@@ -89,25 +89,26 @@ def check_database(report: Report) -> None:
 
 
 def check_gmail(report: Report) -> None:
+    from .gmail_client import gmail_token_present, token_missing_message
+
     settings = get_settings()
     secrets_path = settings.path(settings.google_client_secrets)
-    token_path = settings.path(settings.gmail_token_file)
-    has_inline = bool(settings.gmail_token_json.strip())
+    has_token = gmail_token_present(settings)
 
     report.add(
         "Gmail OAuth client",
-        OK if secrets_path.exists() else (SKIP if has_inline else FAIL),
+        OK if secrets_path.exists() else (SKIP if has_token else FAIL),
         str(secrets_path) if secrets_path.exists() else "not found",
         "Google Cloud Console -> Credentials -> OAuth client ID -> Desktop app, "
         "save as secrets/client_secret.json",
     )
 
-    if not (token_path.exists() or has_inline):
+    if not has_token:
         report.add(
             "Gmail token",
             FAIL,
             "no token yet",
-            "run: python -m app.auth_setup (opens a browser once)",
+            token_missing_message(),
         )
         return
 

@@ -14,7 +14,7 @@ from .applications import CLOSED_STATUSES, STATUS_RANK, create_from_job, stale_a
 from .classify import FOLLOW_UP_KINDS, NOREPLY_RE
 from .config import ROOT, get_profile, get_settings
 from .db import get_engine, init_db
-from .gmail_client import parse_gmail_push
+from .gmail_client import host_setup, parse_gmail_push
 from .models import Application, ApplicationEvent, Job, Message, Outreach
 from .pipeline import (
     clear_inbox,
@@ -38,8 +38,15 @@ async def lifespan(_: FastAPI):
     yield
 
 
+def _template_host_setup(_request: Request) -> dict:
+    return {"host_setup": host_setup()}
+
+
 app = FastAPI(title="Inbox Job Agent", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
-templates = Jinja2Templates(directory=str(ROOT / "app" / "templates"))
+templates = Jinja2Templates(
+    directory=str(ROOT / "app" / "templates"),
+    context_processors=[_template_host_setup],
+)
 templates.env.filters["et"] = fmt_et
 
 PUBLIC_PATHS = {"/healthz", "/login", "/favicon.ico"}
