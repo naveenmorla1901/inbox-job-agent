@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Jobs — Inbox Job Agent{% endblock %}
+{% block title %}Matches — Inbox Job Agent{% endblock %}
 {% block content %}
-<form class="filters" method="get" action="/">
+<form class="filters" method="get" action="/matches">
   <input type="search" name="q" value="{{ q }}" placeholder="title, company, keyword">
   <select name="status">
     {% for option in ["new", "saved", "applied", "ignored", "all"] %}
@@ -18,12 +18,8 @@
     </option>
     <option value="show" {% if duplicates == 'show' %}selected{% endif %}>show repeats</option>
   </select>
-  <select name="sort">
-    <option value="score" {% if sort == 'score' %}selected{% endif %}>best match</option>
-    <option value="date" {% if sort == 'date' %}selected{% endif %}>newest</option>
-  </select>
   <select name="days">
-    {% for option in [7, 14, 30, 90, 365] %}
+    {% for option in [1, 2, 3, 7, 14, 30, 90] %}
     <option value="{{ option }}" {% if days == option %}selected{% endif %}>{{ option }}d</option>
     {% endfor %}
   </select>
@@ -31,11 +27,14 @@
   <button type="submit">Filter</button>
 </form>
 
-{% if not jobs %}
-  <p class="empty">No jobs yet. Run a poll: <code>python -m app.run poll</code></p>
+{% if not day_groups %}
+  <p class="empty">No matching jobs in this window. Open <a href="/">Mail</a> to see what each email produced.</p>
 {% endif %}
 
+{% for day, jobs in day_groups %}
+<h2 class="day-head">{{ day }}</h2>
 {% for job in jobs %}
+{% set mail = messages_by_id.get(job.message_id) %}
 <div class="card">
   <div class="row">
     <div>
@@ -45,15 +44,20 @@
         {% if job.location %}<span>· {{ job.location }}</span>{% endif %}
         {% if job.state %}<span>· {{ job.state }}</span>{% endif %}
         <span>· {{ job.source }}</span>
-        <span>· {{ job.received_at | et("%b %d") }}</span>
+        <span>· {{ job.received_at | et("%I:%M %p ET") }}</span>
         {% if job.posted_at %}<span>· posted {{ job.posted_at }}</span>{% endif %}
         {% if job.salary %}<span>· {{ job.salary }}</span>{% endif %}
         {% if job.visa_sponsorship %}<span>· {{ job.visa_sponsorship }}</span>{% endif %}
-        {% if job.employment_type %}<span>· {{ job.employment_type }}</span>{% endif %}
-        <span>· link: {{ job.scrape_status or "?" }}{% if job.extraction %} via {{ job.extraction }}{% endif %}</span>
         {% if not job.matched %}<span>· below threshold</span>{% endif %}
         {% if job.duplicate_of %}<span>· repeat of #{{ job.duplicate_of }}</span>{% endif %}
       </div>
+      {% if mail %}
+      <div class="meta">
+        from
+        <a href="/?days={{ days }}">{{ mail.subject[:80] or "(no subject)" }}</a>
+        · {{ mail.sender }}
+      </div>
+      {% endif %}
       <div class="meta">
         <a href="{{ job.url }}" target="_blank" rel="noopener" class="joblink">{{ job.url }}</a>
       </div>
@@ -83,5 +87,6 @@
     <span class="chip">status: {{ job.status }}</span>
   </div>
 </div>
+{% endfor %}
 {% endfor %}
 {% endblock %}

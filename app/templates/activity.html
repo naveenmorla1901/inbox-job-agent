@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Run — Inbox Job Agent{% endblock %}
+{% block content %}
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+{% if error %}<div class="flash bad">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <h3>Run</h3>
+  <p class="meta" style="margin:8px 0 14px">
+    Cloud Scheduler checks Gmail every 30 minutes. Each run only reads new mail, one email at a time.
+    Pushing to GitHub <code>main</code> deploys the Docker image. Your Gmail is not changed.
+  </p>
+  <div class="chips">
+    <span class="chip on">every 30 minutes</span>
+    {% if last_run.started_at %}
+    <span class="chip">last check {{ last_run.started_at[:16] }} UTC</span>
+    <span class="chip">{{ last_run.processed|default(0) }} analyzed</span>
+    <span class="chip">{{ last_run.jobs_matched|default(0) }} matches</span>
+    {% else %}
+    <span class="chip">no check yet</span>
+    {% endif %}
+  </div>
+  <div class="actions">
+    <form method="post" action="/activity/check" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Checking…'">
+      <input type="hidden" name="next" value="/activity">
+      <button type="submit" class="primary">Check now</button>
+    </form>
+    <form method="post" action="/activity/reset" onsubmit="return confirm('Clear every job and email this app saved? Gmail is not touched. Only mail that arrives after this moment will be analyzed.')">
+      <button type="submit" class="danger">Start fresh</button>
+    </form>
+  </div>
+</div>
+
+{% if last_run.emails %}
+<div class="card">
+  <h3>Last check</h3>
+  <table>
+    <tr>
+      <th>From</th>
+      <th>Subject</th>
+      <th>Type</th>
+      <th style="width:90px">Jobs</th>
+    </tr>
+    {% for item in last_run.emails %}
+    <tr>
+      <td>{{ item.sender or "—" }}</td>
+      <td>
+        {% if item.id %}
+        <a href="https://mail.google.com/mail/u/0/#inbox/{{ item.id }}" target="_blank" rel="noopener">
+          {{ item.subject or "(no subject)" }}
+        </a>
+        {% else %}
+        {{ item.subject or "(no subject)" }}
+        {% endif %}
+        {% if item.error %}<div class="meta">{{ item.error }}</div>{% endif %}
+      </td>
+      <td>
+        {% if item.error %}
+        <span class="chip">failed</span>
+        {% else %}
+        <span class="chip">{{ (item.category or "other")|replace("_", " ") }}</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if item.jobs_found %}
+        {{ item.jobs_matched }}/{{ item.jobs_found }} match
+        {% else %}
+        —
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if last_run.errors %}
+<div class="card">
+  <h3>Errors</h3>
+  {% for err in last_run.errors %}
+  <div class="meta">{{ err }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

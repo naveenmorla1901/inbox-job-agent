@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     gmail_max_results: int = 60
     gmail_apply_label: bool = False
     gmail_label_name: str = "JobAgent"
+    # projects/PROJECT_ID/topics/gmail-inbox — enables Gmail push on new mail
+    gmail_pubsub_topic: str = ""
 
     database_url: str = "sqlite:///data/jobagent.db"
 

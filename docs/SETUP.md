@@ -250,16 +250,21 @@ Repo → **Settings → Secrets and variables → Actions**:
 
 Variables tab: `LLM_PROVIDER=gemini`, optionally `MIN_JOB_SCORE`, `GMAIL_QUERY`.
 
-**Verify:** Actions tab → **poll-inbox** is idle. No new emails from GitHub Actions.
+**Verify:** GitHub Actions should not poll Gmail. The Cloud Run scheduler does that every 30 minutes.
 
 ---
 
-## Step 8 — Hugging Face Space (the dashboard, always on)
+## Step 8 — Cloud Run (the dashboard)
 
-Full instructions in [`deploy.md`](deploy.md). Short version: create a **Docker** Space, push this
-repo to it with `deploy/huggingface/README.md` as the Space's `README.md`, and add the same secrets
-plus `API_TOKEN` (a long random string — it is the dashboard password). Point it at the same
-`DATABASE_URL` and it shows exactly what the Actions poller collects.
+The live site is Google Cloud Run. Full first-time steps: [`deploy.md`](deploy.md).
+Pushing to **`main`** deploys the Docker image (after the one-time GitHub secrets in deploy.md).
+
+`config/profile.yaml` is not in git. After you edit it locally:
+
+```powershell
+gcloud secrets versions add profile-yaml --data-file=config\profile.yaml
+gcloud run services update inbox-job-agent --region us-east1 --update-secrets PROFILE_YAML=profile-yaml:latest
+```
 
 ---
 

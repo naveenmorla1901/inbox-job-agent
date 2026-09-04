@@ -16,4 +16,4 @@ server.err
 docs/
 tests/
 **/*.md
-!deploy/huggingface/README.md
+config/profile.yaml
