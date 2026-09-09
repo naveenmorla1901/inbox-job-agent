@@ -79,3 +79,11 @@ def test_unclassified_subtypes():
     assert email_type_of("other", "Your weekly newsletter", "unsubscribe from all") == "newsletter"
     assert email_type_of("other", "Security alert", "unusual sign-in on your account") == "security"
     assert email_type_of("job_alert", "8 new jobs", "jobs") == ""
+
+
+def test_scheduling_url_from_links_survives_malformed_url():
+    """A broken href must not crash scheduling-link detection (regression)."""
+    from app.job_fields import scheduling_url_from_links
+
+    urls = ["https://[bad:ipv6/oops", "https://calendly.com/recruiter/intro"]
+    assert scheduling_url_from_links(urls) == "https://calendly.com/recruiter/intro"

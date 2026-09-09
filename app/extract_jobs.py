@@ -3,23 +3,11 @@ from __future__ import annotations
 import base64
 import re
 from dataclasses import dataclass
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote
 
 from bs4 import BeautifulSoup
 
-from .email_parse import ParsedEmail, clean_text
-
-
-def _urlparse(url: str):
-    """urlparse that never raises on malformed input.
-
-    Real emails carry broken hrefs (unbalanced IPv6 brackets, stray characters)
-    that make urlparse raise ValueError; one bad link must not abort extraction
-    for the whole message."""
-    try:
-        return urlparse(url or "")
-    except ValueError:
-        return urlparse("")
+from .email_parse import ParsedEmail, clean_text, safe_urlparse as _urlparse
 
 # Hosts that host actual postings. Anything else in an email is ignored.
 JOB_HOSTS = {

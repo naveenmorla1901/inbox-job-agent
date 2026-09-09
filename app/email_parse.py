@@ -5,7 +5,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parseaddr
 from html import unescape
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
+
+
+def safe_urlparse(url: str):
+    """urlparse that never raises on malformed input.
+
+    Real mail carries broken hrefs (unbalanced IPv6 brackets, stray characters)
+    that make urlparse raise ValueError. A single bad link must never abort
+    extraction, classification, or field enrichment for the whole message."""
+    try:
+        return urlparse(url or "")
+    except ValueError:
+        return urlparse("")
 
 from bs4 import BeautifulSoup
 
