@@ -41,13 +41,18 @@ class Settings(BaseSettings):
     llm_cooldown_seconds: int = 900  # how long to skip a provider after it rate limits
     llm_gemini_gap_seconds: int = 8  # rest a Gemini key after a hit so the other account is used next
     llm_classify_body_chars: int = 4000
+    # Second extraction pass: let an LLM read the whole digest and recover postings
+    # the regex rules missed. Anchor-grounded, so URLs are never hallucinated.
+    llm_extract_digests: bool = True
+    llm_extract_body_chars: int = 40000  # Gemini's context is huge; feed most of the email
+    llm_extract_max_anchors: int = 160
 
     llm_provider: str = "none"  # legacy single-provider setting, still honoured
     gemini_api_key: str = ""
     gemini_api_key_2: str = ""  # second Google AI Studio account; rotated with gemini_api_key
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-flash-latest"
     groq_api_key: str = ""
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-20b"
     deepseek_api_key: str = ""
     nvidia_api_key: str = ""
     openrouter_api_key: str = ""

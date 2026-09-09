@@ -78,7 +78,8 @@ def test_enabled_provider_walks_every_key_you_have(monkeypatch, fresh_config):
     monkeypatch.setenv("LLM_CHAIN_EXTRACT", "")
     llm = LLM(config.get_settings())
     assert [p.name for p, _ in llm.chain("classify")] == ["groq", "gemini", "nvidia"]
-    assert [p.name for p, _ in llm.chain("extract")] == ["nvidia", "gemini", "groq"]
+    # Extraction leads with Gemini for its large context window (whole-email digests).
+    assert [p.name for p, _ in llm.chain("extract")] == ["gemini", "groq", "nvidia"]
 
 
 def test_explicit_chain_overrides_the_default_walk(monkeypatch, fresh_config):

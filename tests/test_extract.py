@@ -805,3 +805,55 @@ def test_zoom_clinchtalent_unwraps_careers_links():
     assert jobs[0].title == "Principal Agentic AI Engineer"
     assert "careers.zoom.us" in jobs[0].url
 
+def test_workday_location_suffixed_titles_are_kept():
+    """Workday digests split titles across lines and end them in 'City, ST'. Titles
+    whose role noun (Executive/Surveyor/Pilot) is not in TITLE_ROLE must still survive."""
+    base = "https://acme.wd5.myworkdayjobs.com/External/job"
+    html = f"""
+    <a href="{base}/HOUSTON-TX/Sales-Executive-Merchant-Regional_JR001">Sales
+    Executive Merchant Regional (Houston, TX)</a>
+    <a href="{base}/MONTGOMERY-AL/Sales-Executive-Merchant-Regional_JR002">Sales
+    Executive Merchant Regional (Montgomery, AL)</a>
+    <a href="{base}/MOBILE-AL/Surveyor-Southeast-District_JR003">Surveyor-Southeast District - Mobile, AL, US, 36601</a>
+    """
+    email = ParsedEmail(
+        id="wd-alert",
+        sender_name="Acme Careers",
+        sender_email="acme@myworkday.com",
+        subject="New Jobs at Acme",
+        html=html,
+        links=extract_links(html),
+    )
+    jobs = extract_from_email(email)
+    titles = {j.title for j in jobs}
+    assert len(jobs) == 3, titles
+    assert any("Houston" in t for t in titles)
+    assert any("Montgomery" in t for t in titles)
+    assert any(t.startswith("Surveyor") for t in titles)
+
+
+def test_bare_address_is_not_a_posting():
+    """A street address behind a click tracker must not be mistaken for a job."""
+    html = """
+    <a href="https://track.example.com/ls/click?upn=AAA">55 Almaden Blvd San Jose, CA 95113</a>
+    """
+    email = ParsedEmail(
+        id="addr", sender_email="jobs@example.com", subject="Your Job Alerts",
+        html=html, links=extract_links(html),
+    )
+    assert extract_from_email(email) == []
+
+
+def test_malformed_url_does_not_crash_extraction():
+    """A broken href (bad IPv6 brackets) must not abort extraction for the message."""
+    html = """
+    <a href="https://[bad:ipv6/oops">Broken</a>
+    <a href="https://www.linkedin.com/jobs/view/3901234567">Data Scientist</a>
+    """
+    email = ParsedEmail(
+        id="badurl", sender_name="LinkedIn Job Alerts",
+        sender_email="jobalerts-noreply@linkedin.com", subject="8 new jobs",
+        html=html, links=extract_links(html),
+    )
+    jobs = extract_from_email(email)  # must not raise
+    assert any("linkedin.com/jobs/view/3901234567" in j.url for j in jobs)

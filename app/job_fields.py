@@ -10,7 +10,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from urllib.parse import urlparse
+
+from .email_parse import safe_urlparse as urlparse
 
 BOARD_SOURCES = {
     "linkedin",

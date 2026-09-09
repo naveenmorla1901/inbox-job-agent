@@ -48,7 +48,7 @@ PROVIDERS: dict[str, Provider] = {
         "gemini",
         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         "gemini_api_key",
-        "gemini-2.0-flash",
+        "gemini-flash-latest",
         style="gemini",
     ),
     # Same Gemini endpoint, second Google account. Cooldown and the post-call gap
@@ -57,14 +57,14 @@ PROVIDERS: dict[str, Provider] = {
         "gemini2",
         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         "gemini_api_key_2",
-        "gemini-2.0-flash",
+        "gemini-flash-latest",
         style="gemini",
     ),
     "groq": Provider(
         "groq",
         "https://api.groq.com/openai/v1/chat/completions",
         "groq_api_key",
-        "llama-3.3-70b-versatile",
+        "openai/gpt-oss-20b",
     ),
     "deepseek": Provider(
         "deepseek",
@@ -76,14 +76,14 @@ PROVIDERS: dict[str, Provider] = {
         "nvidia",
         "https://integrate.api.nvidia.com/v1/chat/completions",
         "nvidia_api_key",
-        "meta/llama-3.3-70b-instruct",
+        "nvidia/llama-3.1-nemotron-70b-instruct",
         json_mode=False,  # NIM rejects response_format on several hosted models
     ),
     "openrouter": Provider(
         "openrouter",
         "https://openrouter.ai/api/v1/chat/completions",
         "openrouter_api_key",
-        "meta-llama/llama-3.3-70b-instruct:free",
+        "google/gemma-4-31b-it:free",
     ),
     "ollama": Provider(
         "ollama",
@@ -94,9 +94,10 @@ PROVIDERS: dict[str, Provider] = {
     ),
 }
 
-# Cheap/fast first for high-volume triage; stronger models first for rare long extracts.
+# Cheap/fast first for high-volume triage; big-context Gemini first for extraction
+# (whole-email digest parsing and long job pages both benefit from the large window).
 CLASSIFY_ORDER = ("groq", "gemini", "gemini2", "nvidia", "deepseek", "openrouter")
-EXTRACT_ORDER = ("nvidia", "deepseek", "gemini", "gemini2", "groq", "openrouter")
+EXTRACT_ORDER = ("gemini", "gemini2", "groq", "nvidia", "deepseek", "openrouter")
 TASK_ORDER = {CLASSIFY: CLASSIFY_ORDER, EXTRACT: EXTRACT_ORDER}
 GEMINI_NAMES = frozenset({"gemini", "gemini2"})
 

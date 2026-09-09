@@ -3,11 +3,11 @@ from __future__ import annotations
 import base64
 import re
 from dataclasses import dataclass
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote
 
 from bs4 import BeautifulSoup
 
-from .email_parse import ParsedEmail, clean_text
+from .email_parse import ParsedEmail, clean_text, safe_urlparse as _urlparse
 
 # Hosts that host actual postings. Anything else in an email is ignored.
 JOB_HOSTS = {
@@ -168,7 +168,7 @@ COMP_LINE = re.compile(
     re.I,
 )
 JUNK_TITLE = re.compile(
-    r"(search for more|see the latest|see more jobs|view all|browse all|update your|"
+    r"(search for more|see the latest|see more jobs?|show me more|view all|browse all|update your|"
     r"unsubscribe|manage settings|privacy policy|^jobs for |^create$|"
     r"^job alert:|.+ jobs$|has not been updated|minimum base pay|job listings|"
     r"improve your alerts|telling us what you.re looking for|"
@@ -176,7 +176,20 @@ JUNK_TITLE = re.compile(
     r"gift \d+ free|^share now$|^learn why|^help$|^terms and|^conditions:)",
     re.I,
 )
-APPLY_CTA = re.compile(r"^(apply now|apply\b|view job|see job|learn more|read more)\b", re.I)
+APPLY_CTA = re.compile(
+    r"^(apply now|apply\b|view job|see job|learn more|read more|"
+    r"(?:1|one)[\s-]?click apply|quick apply|easy apply)\b",
+    re.I,
+)
+# A street address, as opposed to a job title that merely ends in a "City, ST[, ZIP]".
+# Keyed on a leading street number or a street-type word - NOT a bare ZIP, because
+# real jobs2web titles end in "Brentwood, TN, US, 37027".
+ADDRESS_LINE = re.compile(
+    r"^\d+\s+\w|"
+    r"\b(blvd|boulevard|street|st\.|ave|avenue|road|rd\.|suite|ste\.|floor|fl\.|"
+    r"drive|dr\.|lane|ln\.|way|parkway|pkwy|plaza|hwy|highway)\b",
+    re.I,
+)
 
 
 @dataclass
@@ -212,7 +225,7 @@ def unwrap_url(url: str, depth: int = 4) -> str:
             url = aws
             continue
 
-        parsed = urlparse(url)
+        parsed = _urlparse(url)
         params = parse_qs(parsed.query or "")
         nested = ""
 
@@ -248,7 +261,7 @@ def unwrap_url(url: str, depth: int = 4) -> str:
 
 
 def _haystack_go(url: str) -> str:
-    parsed = urlparse(url)
+    parsed = _urlparse(url)
     host = host_of(url)
     params = parse_qs(parsed.query or "")
     if host.endswith("haystack.cv") and (parsed.path or "").rstrip("/") == "/go" and params.get("j"):
@@ -272,7 +285,7 @@ def _encoded_redirect_dest(url: str) -> str:
 
 
 def host_of(url: str) -> str:
-    host = (urlparse(url).hostname or "").lower()
+    host = (_urlparse(url).hostname or "").lower()
     return host[4:] if host.startswith("www.") else host
 
 
@@ -326,7 +339,7 @@ def looks_like_job_card(text: str) -> bool:
 def is_job_url(url: str) -> bool:
     raw = url
     url = unwrap_url(url)
-    parsed = urlparse(url)
+    parsed = _urlparse(url)
     path = parsed.path or ""
     params = parse_qs(parsed.query or "")
     host = host_of(url)
@@ -354,6 +367,11 @@ def is_job_url(url: str) -> bool:
         return True
     if source_of(url) == "zoom" and re.search(r"/jobs/[a-z0-9-]+", path, re.I):
         return True
+    # ZipRecruiter wraps each posting in a per-job redirect: /ekm/<token> (job view)
+    # or /km/<token> (1-Click Apply). The real title rides in the anchor text, so
+    # these are postings even though the path carries no numeric id.
+    if source_of(url) == "ziprecruiter" and re.search(r"^/e?km/[A-Za-z0-9_-]{10,}", path):
+        return True
     if SEARCH_PATH.search(path) and not POSTING_PATH.search(path):
         return False
     if JOBS2WEB_PATH.search(path) and re.search(r"/\d[\w.-]*/?$", path):
@@ -374,7 +392,7 @@ def is_job_url(url: str) -> bool:
 def canonical_key(url: str) -> str:
     """Stable identity for a posting so the same job never lands in the DB twice."""
     url = unwrap_url(url)
-    parsed = urlparse(url)
+    parsed = _urlparse(url)
     host = host_of(url)
     path = (parsed.path or "").rstrip("/")
     params = parse_qs(parsed.query or "")
@@ -779,7 +797,16 @@ def extract_from_email(email: ParsedEmail, limit: int | None = 25) -> list[JobCa
                 continue
             if title.lower().startswith("http"):
                 continue
-            if is_location_line(title) and not TITLE_ROLE.search(title or ""):
+            # Only discard a "title" that is really just a location string. A bare
+            # location is short ("Houston, TX"); a genuine title that merely ends in
+            # a location ("Surveyor-Southeast District - Mobile, AL", "Sales Executive
+            # Merchant Regional (Houston, TX)") is longer and must be kept even when
+            # its role noun (Executive, Surveyor, Pilot) is not in TITLE_ROLE.
+            if (
+                is_location_line(title)
+                and not TITLE_ROLE.search(title or "")
+                and (len(title) <= 24 or ADDRESS_LINE.search(title or ""))
+            ):
                 continue
             if COMP_LINE.search(title or "") and not TITLE_ROLE.search(title or ""):
                 continue
