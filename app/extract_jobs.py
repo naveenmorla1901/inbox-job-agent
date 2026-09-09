@@ -9,6 +9,18 @@ from bs4 import BeautifulSoup
 
 from .email_parse import ParsedEmail, clean_text
 
+
+def _urlparse(url: str):
+    """urlparse that never raises on malformed input.
+
+    Real emails carry broken hrefs (unbalanced IPv6 brackets, stray characters)
+    that make urlparse raise ValueError; one bad link must not abort extraction
+    for the whole message."""
+    try:
+        return urlparse(url or "")
+    except ValueError:
+        return urlparse("")
+
 # Hosts that host actual postings. Anything else in an email is ignored.
 JOB_HOSTS = {
     "linkedin.com": "linkedin",
@@ -181,6 +193,15 @@ APPLY_CTA = re.compile(
     r"(?:1|one)[\s-]?click apply|quick apply|easy apply)\b",
     re.I,
 )
+# A street address, as opposed to a job title that merely ends in a "City, ST[, ZIP]".
+# Keyed on a leading street number or a street-type word - NOT a bare ZIP, because
+# real jobs2web titles end in "Brentwood, TN, US, 37027".
+ADDRESS_LINE = re.compile(
+    r"^\d+\s+\w|"
+    r"\b(blvd|boulevard|street|st\.|ave|avenue|road|rd\.|suite|ste\.|floor|fl\.|"
+    r"drive|dr\.|lane|ln\.|way|parkway|pkwy|plaza|hwy|highway)\b",
+    re.I,
+)
 
 
 @dataclass
@@ -216,7 +237,7 @@ def unwrap_url(url: str, depth: int = 4) -> str:
             url = aws
             continue
 
-        parsed = urlparse(url)
+        parsed = _urlparse(url)
         params = parse_qs(parsed.query or "")
         nested = ""
 
@@ -252,7 +273,7 @@ def unwrap_url(url: str, depth: int = 4) -> str:
 
 
 def _haystack_go(url: str) -> str:
-    parsed = urlparse(url)
+    parsed = _urlparse(url)
     host = host_of(url)
     params = parse_qs(parsed.query or "")
     if host.endswith("haystack.cv") and (parsed.path or "").rstrip("/") == "/go" and params.get("j"):
@@ -276,7 +297,7 @@ def _encoded_redirect_dest(url: str) -> str:
 
 
 def host_of(url: str) -> str:
-    host = (urlparse(url).hostname or "").lower()
+    host = (_urlparse(url).hostname or "").lower()
     return host[4:] if host.startswith("www.") else host
 
 
@@ -330,7 +351,7 @@ def looks_like_job_card(text: str) -> bool:
 def is_job_url(url: str) -> bool:
     raw = url
     url = unwrap_url(url)
-    parsed = urlparse(url)
+    parsed = _urlparse(url)
     path = parsed.path or ""
     params = parse_qs(parsed.query or "")
     host = host_of(url)
@@ -383,7 +404,7 @@ def is_job_url(url: str) -> bool:
 def canonical_key(url: str) -> str:
     """Stable identity for a posting so the same job never lands in the DB twice."""
     url = unwrap_url(url)
-    parsed = urlparse(url)
+    parsed = _urlparse(url)
     host = host_of(url)
     path = (parsed.path or "").rstrip("/")
     params = parse_qs(parsed.query or "")
@@ -788,7 +809,16 @@ def extract_from_email(email: ParsedEmail, limit: int | None = 25) -> list[JobCa
                 continue
             if title.lower().startswith("http"):
                 continue
-            if is_location_line(title) and not TITLE_ROLE.search(title or ""):
+            # Only discard a "title" that is really just a location string. A bare
+            # location is short ("Houston, TX"); a genuine title that merely ends in
+            # a location ("Surveyor-Southeast District - Mobile, AL", "Sales Executive
+            # Merchant Regional (Houston, TX)") is longer and must be kept even when
+            # its role noun (Executive, Surveyor, Pilot) is not in TITLE_ROLE.
+            if (
+                is_location_line(title)
+                and not TITLE_ROLE.search(title or "")
+                and (len(title) <= 24 or ADDRESS_LINE.search(title or ""))
+            ):
                 continue
             if COMP_LINE.search(title or "") and not TITLE_ROLE.search(title or ""):
                 continue
