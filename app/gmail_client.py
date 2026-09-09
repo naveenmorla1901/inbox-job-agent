@@ -159,17 +159,25 @@ class GmailClient:
         )
         self._label_id: str | None = None
 
-    def list_message_ids(self, query: str, max_results: int) -> list[str]:
+    def list_message_ids(self, query: str, max_results: int | None = None) -> list[str]:
+        """Page through Gmail search hits.
+
+        `max_results=None` walks every page until the query is exhausted (eval
+        windows). Production poll still passes a cap.
+        """
         ids: list[str] = []
         page_token = None
-        while len(ids) < max_results:
+        while max_results is None or len(ids) < max_results:
+            remaining = 100 if max_results is None else min(100, max_results - len(ids))
+            if remaining <= 0:
+                break
             resp = (
                 self.service.users()
                 .messages()
                 .list(
                     userId="me",
                     q=query,
-                    maxResults=min(100, max_results - len(ids)),
+                    maxResults=remaining,
                     pageToken=page_token,
                 )
                 .execute()
@@ -179,6 +187,10 @@ class GmailClient:
             if not page_token:
                 break
         return ids
+
+    def me_email(self) -> str:
+        profile = self.service.users().getProfile(userId="me").execute()
+        return str(profile.get("emailAddress") or "")
 
     def get_message(self, message_id: str) -> dict[str, Any]:
         return (

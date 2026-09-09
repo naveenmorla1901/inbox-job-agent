@@ -55,6 +55,13 @@ JOB_HOSTS = {
     "myworkdaysite.com": "workday",
     "wd1.myworkdayjobs.com": "workday",
     "wd5.myworkdayjobs.com": "workday",
+    "jobright.ai": "jobright",
+    "jobright.com": "jobright",
+    "avature.net": "avature",
+    "simplify.jobs": "simplify",
+    "ihire.com": "ihire",
+    "twine.net": "twine",
+    "zoom.us": "zoom",
 }
 
 # URL paths that look like a single posting rather than a search page.
@@ -99,16 +106,26 @@ ID_PARAMS = (
 WEAK_ID_PARAMS = ("id",)
 
 FOOTER_TEXT = re.compile(
-    r"^(unsubscribe|privacy policy|view all jobs|update your preferences|browse all|"
-    r"post a job|get more recommendations|we want to know)$",
+    r"^(unsubscribe|privacy policy|view all jobs|see more jobs|update your preferences|"
+    r"update your profile|browse all|post a job|get more recommendations|we want to know|"
+    r"adjust your job alert notifications?|this is a bad match)$",
     re.I,
 )
 CLICK_HOST_HINT = (
     "ct.sendgrid.net",
+    "sendgrid.email",
     "click.appcast.io",
     "awstrack.me",
     "click.mailer.io",
     "mandrillapp.com",
+    "avature.net",
+    "simplify.jobs",
+    "cts.indeed.com",
+    "click.monster.com",
+    "track.ihire.com",
+    "pageuppeople.com",
+    "redirect.twinehq.com",
+    "api.clinchtalent.com",
 )
 
 LOCATION_HINT = re.compile(
@@ -127,8 +144,15 @@ NOISE_LINE = re.compile(
 TITLE_HINT = re.compile(
     r"\b(engineer|scientist|developer|analyst|specialist|architect|researcher|"
     r"consultant|intern|co-?op|coordinator|associate|director|manager|lead|"
-    r"principal|staff|machine learning|software|research|data science|"
-    r"ai/?ml|nlp|llm)\b",
+    r"principal|staff|accountant|strategist|machine learning|software|research|"
+    r"data science|ai/?ml|nlp|llm)\b",
+    re.I,
+)
+# Role words only — "software" in a company tagline is not a job title.
+TITLE_ROLE = re.compile(
+    r"\b(engineer|scientist|developer|analyst|specialist|architect|researcher|"
+    r"consultant|intern|co-?op|coordinator|associate|director|manager|lead|"
+    r"principal|staff|accountant|strategist)\b",
     re.I,
 )
 COMPANY_HINT = re.compile(
@@ -139,16 +163,20 @@ COMPANY_HINT = re.compile(
 COMP_LINE = re.compile(
     r"(\$\s?\d|\bUSD\b|\bEUR\b|\bGBP\b|\bCAD\b|"
     r"\d[\d,]+\s*[-–]\s*\d|"
-    r"\d+\s*[-–]\s*\d+\s*(k|/yr|/hr|an hour|per year))",
+    r"\d+\s*[-–]\s*\d+\s*(k|/yr|/hr|an hour|per year)|"
+    r"\d[\d,]+\s+a year)",
     re.I,
 )
 JUNK_TITLE = re.compile(
-    r"(search for more|see the latest|view all|browse all|update your|"
-    r"unsubscribe|manage settings|privacy policy|^jobs for |"
-    r"improve your alerts|telling us what you.re looking for)",
+    r"(search for more|see the latest|see more jobs|view all|browse all|update your|"
+    r"unsubscribe|manage settings|privacy policy|^jobs for |^create$|"
+    r"^job alert:|.+ jobs$|has not been updated|minimum base pay|job listings|"
+    r"improve your alerts|telling us what you.re looking for|"
+    r"email preferences|^preferences$|^\d{4}\s+\S+,?\s+inc|"
+    r"gift \d+ free|^share now$|^learn why|^help$|^terms and|^conditions:)",
     re.I,
 )
-APPLY_CTA = re.compile(r"^(apply now|view job|see job|learn more|read more)\b", re.I)
+APPLY_CTA = re.compile(r"^(apply now|apply\b|view job|see job|learn more|read more)\b", re.I)
 
 
 @dataclass
@@ -179,7 +207,7 @@ def unwrap_url(url: str, depth: int = 4) -> str:
         if haystack:
             return haystack
 
-        aws = _aws_track_dest(url)
+        aws = _encoded_redirect_dest(url)
         if aws and aws != url:
             url = aws
             continue
@@ -229,16 +257,18 @@ def _haystack_go(url: str) -> str:
     return ""
 
 
-def _aws_track_dest(url: str) -> str:
-    """SES / AWS click wraps: awstrack.me/L0/https:%2F%2Fbuiltin.com%2Fjob%2F.../1/<id>."""
+def _encoded_redirect_dest(url: str) -> str:
+    """SES L0 and Twine CL0 wraps: .../L0/https:%2F%2Fhost%2Fpath/1/<id>."""
     lower = url.lower()
-    marker = "/l0/"
-    if "awstrack.me" not in lower or marker not in lower:
-        return ""
-    rest = url.split("/L0/", 1)[-1] if "/L0/" in url else url.split("/l0/", 1)[-1]
-    dest = rest.split("/1/")[0]
-    dest = unquote(dest)
-    return dest if dest.lower().startswith("http") else ""
+    for marker in ("/cl0/", "/l0/"):
+        idx = lower.find(marker)
+        if idx < 0:
+            continue
+        rest = url[idx + len(marker) :]
+        dest = unquote(rest.split("/1/")[0])
+        if dest.lower().startswith("http"):
+            return dest
+    return ""
 
 
 def host_of(url: str) -> str:
@@ -301,7 +331,11 @@ def is_job_url(url: str) -> bool:
     params = parse_qs(parsed.query or "")
     host = host_of(url)
 
-    if re.search(r"/(unsubscribe|settings|privacy|help|interview/index|community/bowl)", path, re.I):
+    if re.search(
+        r"/(unsubscribe|settings|privacy|help|interview/index|community/bowl|editagent)",
+        path,
+        re.I,
+    ):
         return False
     # An ATS id in the query is a posting no matter whose domain hosts the page.
     if any(p in params for p in ID_PARAMS):
@@ -311,6 +345,14 @@ def is_job_url(url: str) -> bool:
     if host.endswith("haystack.cv") and (path.rstrip("/") == "/go" or "j" in params):
         return True
     if host.endswith("glassdoor.com") and "joblisting.htm" in path.lower():
+        return True
+    if source_of(url) == "jobright":
+        return bool(re.search(r"/jobs/info/[0-9a-f]+", path, re.I))
+    if source_of(url) == "ihire" and re.search(r"/jobs/view/\d+", path, re.I):
+        return True
+    if source_of(url) == "twine" and re.search(r"/projects/[a-z0-9-]+", path, re.I):
+        return True
+    if source_of(url) == "zoom" and re.search(r"/jobs/[a-z0-9-]+", path, re.I):
         return True
     if SEARCH_PATH.search(path) and not POSTING_PATH.search(path):
         return False
@@ -324,6 +366,8 @@ def is_job_url(url: str) -> bool:
         return True
     if source_of(url) == "builtin" and re.search(r"/job/", path):
         return True
+    if host.endswith("em.linkedin.com"):
+        return False
     return any(p in params for p in WEAK_ID_PARAMS)
 
 
@@ -381,9 +425,19 @@ def canonical_key(url: str) -> str:
         m = re.search(r"/job/[^/]+/(\d+)", path)
         if m:
             return f"builtin:{m.group(1)}"
-    if "sendgrid.net" in host or host.endswith("click.appcast.io"):
+    if source == "jobright":
+        m = re.search(r"/jobs/info/([0-9a-f]+)", path, re.I)
+        if m:
+            return f"jobright:{m.group(1)}"
+    if source == "twine":
+        m = re.search(r"/projects/([a-z0-9-]+)", path, re.I)
+        if m:
+            return f"twine:{m.group(1)}"
+    if "sendgrid.net" in host or "sendgrid.email" in host or host.endswith("click.appcast.io"):
         upn = (params.get("upn") or [url])[0]
         return f"appcast:{upn[:80]}"
+    if params.get("upn"):
+        return f"click:{host}:{params['upn'][0][:80]}"
 
     for key in (*ID_PARAMS, *WEAK_ID_PARAMS):
         if key in params:
@@ -438,6 +492,66 @@ def _container_lines(anchor) -> list[str]:
     return lines[:16]
 
 
+def _previous_sibling_card_lines(anchor) -> list[str]:
+    """Simplify-style cards: title lives in a table, the apply URL is an empty overlay <a>."""
+    prev = getattr(anchor, "previous_sibling", None)
+    for _ in range(12):
+        while prev is not None and getattr(prev, "name", None) is None:
+            prev = getattr(prev, "previous_sibling", None)
+        if prev is None:
+            break
+        text = clean_text(prev.get_text("\n") if hasattr(prev, "get_text") else "")
+        if looks_like_job_card(text):
+            return [ln for ln in text.split("\n") if ln.strip()][:16]
+        prev = getattr(prev, "previous_sibling", None)
+    return []
+
+
+def _add_unlinked_card_tables(
+    soup, found: dict[str, JobCandidate], fallback_company: str, limit: int | None
+) -> None:
+    """Leaf tables that look like job cards but have no apply <a> (last Simplify card)."""
+    seen = {(j.title.lower(), (j.company or "").lower()) for j in found.values()}
+    for table in soup.find_all("table"):
+        if limit is not None and len(found) >= limit:
+            return
+        if table.find("a", href=True):
+            continue
+        if table.find("table"):
+            inner_cards = 0
+            for inner in table.find_all("table"):
+                blob = clean_text(inner.get_text("\n"))
+                if looks_like_job_card(blob) and TITLE_ROLE.search(blob):
+                    inner_cards += 1
+            if inner_cards >= 2:
+                continue
+        lines = [ln for ln in clean_text(table.get_text("\n")).split("\n") if ln.strip()][:16]
+        if not looks_like_job_card("\n".join(lines)):
+            continue
+        title, company, location = _guess_fields("", lines)
+        if not title or not TITLE_ROLE.search(title) or JUNK_TITLE.search(title):
+            continue
+        company = company or fallback_company or ""
+        if JUNK_TITLE.search(company or "") or GENERIC_COMPANY.search(company or ""):
+            company = fallback_company or ""
+        if any(t == title.lower() for t, _ in seen):
+            continue
+        if not company:
+            continue
+        key = f"card:{(company or 'job').lower()}:{title.lower()}"[:180]
+        source = next((j.source for j in found.values() if j.source), "")
+        found[key] = JobCandidate(
+            url="",
+            url_key=key,
+            title=title,
+            company=company,
+            location=location,
+            source=source,
+            context=" | ".join(lines)[:600],
+        )
+        seen.add((title.lower(), company.lower()))
+
+
 def _strip_prefix(line: str) -> str:
     return re.sub(
         r"^[\W🔥🏢📍💰➜→🏠🇺🇸⭐★·•]+",
@@ -473,6 +587,12 @@ def is_location_line(line: str) -> bool:
     return bool(LOCATION_HINT.search(line) and len(line) < 40)
 
 
+GENERIC_COMPANY = re.compile(
+    r"^(opportunities|careers|jobs|hiring|talent acquisition|job alerts?|"
+    r"just posted!?|jobseekers?|posted\b|open to offers|twine team|"
+    r"what you can expect)\b",
+    re.I,
+)
 _BOARD_SENDER_NAMES = {
     "linkedin",
     "indeed",
@@ -493,25 +613,39 @@ def company_from_sender(email: ParsedEmail) -> str:
     name = email.sender_name or ""
     match = re.search(r"(?:careers|jobs|hiring|opportunities)(?:\s+at)?\s+(.+)", name, re.I)
     if match:
-        return match.group(1).strip(" .")[:150]
+        return match.group(1).strip(" .!")[:150]
     match = re.search(r"^(.+?)\s+(?:careers|jobs|hiring)\b", name, re.I)
     if match:
-        token = match.group(1).strip(" .")
+        token = match.group(1).strip(" .!")
         if not _is_board_sender_name(token):
             return token[:150]
     match = re.search(r"new jobs posted from\s+(.+)", email.subject or "", re.I)
     if match:
-        token = match.group(1).strip(" .")
+        token = match.group(1).strip(" .!")
         token = re.sub(r"\.(jobs2web\.com|jobs)$", "", token, flags=re.I)
         return token.replace(".", " ").title()[:150]
+    match = re.search(r"(?:job alerts? for you from|alerts? for you from)\s+(.+)", email.subject or "", re.I)
+    if match:
+        token = match.group(1).strip(" .!")
+        if token and not _is_board_sender_name(token):
+            return token[:150]
     match = re.search(r"\bat\s+(.+?)(?:\.|$)", email.subject or "", re.I)
     if match:
-        token = match.group(1).strip(" .")
-        if not _is_board_sender_name(token):
+        token = match.group(1).strip(" .!")
+        if not _is_board_sender_name(token) and not re.search(r"\d+\s+more jobs", token, re.I):
+            return token[:150]
+    match = re.search(r"\s@\s+(.+)$", email.subject or "", re.I)
+    if match:
+        token = match.group(1).strip(" .!")
+        if token and not _is_board_sender_name(token) and not re.search(r"\d+\s+more jobs", token, re.I):
             return token[:150]
     local = (email.sender_email or "").split("@")[0]
     local = re.split(r"[-_.]?(?:am|a)?[-_.]?jobnotification", local, maxsplit=1, flags=re.I)[0]
-    if local and not re.search(r"noreply|no-reply|alerts?|mailer|jobs?alerts", local, re.I):
+    if local and not re.search(
+        r"noreply|no-reply|alerts?|mailer|jobs?alerts|opportunit|careers?",
+        local,
+        re.I,
+    ):
         return re.sub(r"[._-]+", " ", local).title()[:150]
     token = name.strip(" .")
     if token and not _is_board_sender_name(token) and len(token) < 60:
@@ -538,10 +672,12 @@ def _guess_fields(anchor_text: str, lines: list[str]) -> tuple[str, str, str]:
     for ln in useful:
         if _looks_like_snippet(ln) and not TITLE_HINT.search(ln):
             continue
+        if APPLY_CTA.match(ln) or FOOTER_TEXT.match(ln):
+            continue
         if COMPANY_HINT.search(ln) and not TITLE_HINT.search(ln):
             companies.append(ln)
             continue
-        if TITLE_HINT.search(ln) and len(ln) < 180:
+        if TITLE_ROLE.search(ln) and len(ln) < 180:
             titles.append(re.split(r"\s*[\$*]", ln, 1)[0].strip()[:140] or ln[:140])
             continue
         if COMP_LINE.search(ln):
@@ -555,6 +691,9 @@ def _guess_fields(anchor_text: str, lines: list[str]) -> tuple[str, str, str]:
     title = titles[0] if titles else ""
     company = companies[0] if companies else ""
     location = locations[0] if locations else ""
+    if not title and companies:
+        title = companies.pop(0)
+        company = companies[0] if companies else ""
     if not title:
         for ln in useful:
             if ln not in locations and ln != company and not COMP_LINE.search(ln) and not _looks_like_snippet(ln):
@@ -575,11 +714,17 @@ def _usable_job_label(text: str) -> bool:
         return False
     if NOISE_LINE.match(blob):
         return False
+    # Appcast cards dump location + title + description into one <a>.
+    if LOCATION_HINT.search(blob) and re.search(r"\b(the|about|would you)\b", blob, re.I):
+        return False
     return True
 
 
-def extract_from_email(email: ParsedEmail, limit: int = 25) -> list[JobCandidate]:
-    """Pull distinct job postings out of an alert digest (HTML preferred, text fallback)."""
+def extract_from_email(email: ParsedEmail, limit: int | None = 25) -> list[JobCandidate]:
+    """Pull distinct job postings out of an alert digest (HTML preferred, text fallback).
+
+    `limit=None` keeps every distinct posting (eval). Production poll still caps.
+    """
     found: dict[str, JobCandidate] = {}
     fallback_company = company_from_sender(email)
 
@@ -594,6 +739,8 @@ def extract_from_email(email: ParsedEmail, limit: int = 25) -> list[JobCandidate
             if is_footer_link(anchor_text, href) or is_footer_link(anchor_text, url):
                 continue
             lines = _container_lines(anchor)
+            if not lines and is_click_tracker(href):
+                lines = _previous_sibling_card_lines(anchor)
             card_text = "\n".join(lines) or anchor_text
             keep = is_job_url(href) or (
                 is_click_tracker(href)
@@ -617,9 +764,30 @@ def extract_from_email(email: ParsedEmail, limit: int = 25) -> list[JobCandidate
                     or title.lower().startswith(company.lower() + "-")
                 ):
                     company = ""
-            if not company or _looks_like_snippet(company) or JUNK_TITLE.search(company or ""):
+            if (
+                not company
+                or _looks_like_snippet(company)
+                or JUNK_TITLE.search(company or "")
+                or GENERIC_COMPANY.search(company or "")
+                or APPLY_CTA.match(company or "")
+                or re.search(r"\d+\s+more jobs", company or "", re.I)
+            ):
                 company = fallback_company or ""
-            if JUNK_TITLE.search(title or ""):
+            if JUNK_TITLE.search(title or "") or APPLY_CTA.match(title or ""):
+                continue
+            if not (title or "").strip():
+                continue
+            if title.lower().startswith("http"):
+                continue
+            if is_location_line(title) and not TITLE_ROLE.search(title or ""):
+                continue
+            if COMP_LINE.search(title or "") and not TITLE_ROLE.search(title or ""):
+                continue
+            if not company and title == title.lower():
+                continue
+            if not company and any(
+                j.title.lower() == title.lower() and j.company for j in found.values()
+            ):
                 continue
             existing = found.get(key)
             if existing and len(existing.title) >= len(title):
@@ -634,8 +802,9 @@ def extract_from_email(email: ParsedEmail, limit: int = 25) -> list[JobCandidate
                 source=source,
                 context=" | ".join(lines)[:600],
             )
-            if len(found) >= limit:
+            if limit is not None and len(found) >= limit:
                 break
+        _add_unlinked_card_tables(soup, found, fallback_company, limit)
 
     if not found:
         for raw in re.findall(r"https?://[^\s<>\"')]+", email.text or ""):
@@ -652,7 +821,7 @@ def extract_from_email(email: ParsedEmail, limit: int = 25) -> list[JobCandidate
                     source=source_of(url),
                 ),
             )
-            if len(found) >= limit:
+            if limit is not None and len(found) >= limit:
                 break
 
     return list(found.values())

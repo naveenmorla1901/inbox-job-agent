@@ -41,6 +41,24 @@ def test_search_and_unsubscribe_links_are_not_jobs():
     assert not is_job_url("https://www.linkedin.com/jobs/search/?keywords=data")
     assert not is_job_url("https://www.linkedin.com/comm/psettings/email-unsubscribe?lipi=1")
     assert not is_job_url("https://example.com/newsletter")
+    assert not is_job_url(
+        "https://t1.em.linkedin.com/r/?id=h3f7691e6-f0e8-4a05-a0b7-0d2f79f8be70,a5e21a,b866ed"
+    )
+
+
+def test_linkedin_premium_gift_email_is_not_jobs():
+    html = """
+    <a href="https://t1.em.linkedin.com/r/?id=aaa">Gift 2 free months</a>
+    <a href="https://t1.em.linkedin.com/r/?id=bbb">Share now</a>
+    <a href="https://t1.em.linkedin.com/r/?id=ccc">Learn why we included this.</a>
+    """
+    email = ParsedEmail(
+        id="li-gift",
+        sender_email="linkedin@em.linkedin.com",
+        subject="Gift your friends 2 free months of Premium",
+        html=html,
+    )
+    assert extract_from_email(email) == []
 
 
 def test_company_career_pages_count_when_they_carry_an_ats_id():
@@ -185,6 +203,34 @@ def test_appcast_apply_button_next_to_the_card_still_counts():
     assert all(job.company == "GXO" for job in jobs)
 
 
+def test_chewy_career_alert_uses_company_not_opportunities():
+    html = """
+    <td>
+      Research Scientist II
+      Bellevue, WA
+      <a href="https://u14935226.ct.sendgrid.net/ls/click?upn=CHEWY1">Apply Now</a>
+    </td>
+    <td>
+      Machine Learning Engineer III
+      USA - WA - Bellevue - SEA1
+      <a href="https://u14935226.ct.sendgrid.net/ls/click?upn=CHEWY2">Apply Now</a>
+    </td>
+    """
+    email = ParsedEmail(
+        id="chewy",
+        sender_name="Chewy Inc",
+        sender_email="opportunities@careeralerts.chewy.com",
+        subject="Naveen: Job Alerts for you from Chewy",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {
+        "Research Scientist II",
+        "Machine Learning Engineer III",
+    }
+    assert all(job.company == "Chewy" for job in jobs)
+
+
 def test_glassdoor_empty_card_links_keep_title_and_company():
     html = """
     <table>
@@ -309,6 +355,26 @@ def test_jobs2web_digest_keeps_each_titled_link():
     assert all(job.company == "Komatsu" for job in jobs)
 
 
+def test_jobs2web_accountant_and_strategist_titles_are_kept():
+    html = """
+    <a href="http://careers.hexion.com/job/Sourcing-Manager/1/">Sourcing Manager - Columbus, OH, US</a>
+    <a href="http://careers.hexion.com/job/Accountant-Financial/2/">Accountant, Financial Shared Services - Columbus, OH, US</a>
+    <a href="http://careers.hexion.com/job/Senior-Content-Strategist/3/">Senior Content Strategist - Columbus, OH, US</a>
+    """
+    email = ParsedEmail(
+        id="hexion",
+        sender_email="hexioncareers-jobnotification@noreply.jobs2web.com",
+        subject="New jobs posted from careers.hexion.com",
+        html=html,
+    )
+    titles = {job.title.split(" - ")[0] for job in extract_from_email(email)}
+    assert titles == {
+        "Sourcing Manager",
+        "Accountant, Financial Shared Services",
+        "Senior Content Strategist",
+    }
+
+
 def test_workday_link_text_is_kept_as_the_title():
     html = """
     <p>Please review the jobs below.</p>
@@ -377,3 +443,365 @@ def test_sibling_job_titles_are_not_stolen_from_the_parent():
     data = next(job for job in jobs.values() if "Data-Science" in job.url)
     assert data.title.startswith("Data Science Student Experience")
     assert data.title != "Software Engineer - Minneapolis, MN, US, 55402"
+
+
+def test_unlimited_limit_keeps_every_digest_card():
+    cards = []
+    for i in range(45):
+        cards.append(
+            f'<a href="https://haystack.cv/go?j=aaaaaaaa-bbbb-cccc-dddd-{i:012d}">'
+            f"Role {i} Engineer</a>"
+        )
+    email = ParsedEmail(
+        id="many",
+        sender_email="alerts@alerts.haystack.cv",
+        subject="45 New Jobs Matching Your Search",
+        html="\n".join(cards),
+    )
+    assert len(extract_from_email(email)) == 25
+    assert len(extract_from_email(email, limit=None)) == 45
+
+
+def test_jobright_info_urls_are_postings():
+    url = "https://jobright.ai/jobs/info/6aa0543e3b5aa83237b08694?utm_source=email"
+    assert source_of(url) == "jobright"
+    assert is_job_url(url)
+    assert canonical_key(url) == "jobright:6aa0543e3b5aa83237b08694"
+    assert not is_job_url("https://jobright.ai/?utm_source=email")
+
+
+def test_jobright_digest_keeps_each_apply_card():
+    html = """
+    <a href="https://jobright.ai/jobs/info/aaa111111111111111111111">
+      Apple
+      Apps · Public Company
+      97%
+      Simulation Engineer
+      Cupertino, CA
+      APPLY NOW
+    </a>
+    <a href="https://jobright.ai/jobs/info/bbb222222222222222222222">Data Scientist</a>
+    <a href="https://jobright.ai/jobs/info/bbb222222222222222222222">APPLY NOW</a>
+    <a href="https://jobright.ai/?utm_source=email">View More Opportunities</a>
+    """
+    email = ParsedEmail(
+        id="jobright",
+        sender_name="Jobright Job Alert",
+        sender_email="noreply@jobright.ai",
+        subject="Your Top Job matches from Jobright",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {"Simulation Engineer", "Data Scientist"}
+    assert all(job.source == "jobright" for job in jobs)
+    apple = next(job for job in jobs if job.title == "Simulation Engineer")
+    assert apple.company == "Apple"
+    assert "Cupertino" in apple.location
+
+
+def test_avature_job_title_links_are_kept():
+    html = """
+    <p>We've identified jobs that match your alert preferences!</p>
+    <p>Job Matches:
+      <a href="http://ea.avature.net/ltrk/aaa111">Live Service Design Director</a>
+      <a href="http://ea.avature.net/ltrk/bbb222">Gameplay Data Science Engineer (Apex Legends)</a>
+      <a href="http://ea.avature.net/ltrk/ccc333">Technical Director</a>
+      <a href="http://ea.avature.net/ltrk/ddd444">Technical Program Manager - Enterprise Intelligence</a>
+    </p>
+    <a href="http://ea.avature.net/ltrk/eee555">here</a>
+    <a href="http://ea.avature.net/ltrk/fff666">update your profile</a>
+    <a href="https://ea.avature.net/unsubscribe.php?uid=x">Unsubscribe</a>
+    """
+    email = ParsedEmail(
+        id="ea",
+        sender_email="jobnotification@ea.avature.net",
+        subject="New Job Openings at Electronic Arts!",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {
+        "Live Service Design Director",
+        "Gameplay Data Science Engineer (Apex Legends)",
+        "Technical Director",
+        "Technical Program Manager - Enterprise Intelligence",
+    }
+    assert all(job.source == "avature" for job in jobs)
+    assert all(job.company == "Electronic Arts" for job in jobs)
+
+
+def test_simplify_click_cards_are_kept():
+    html = """
+    <a href="https://email.matches.simplify.jobs/c/eJxAAA111">
+      Intercontinental Exchange
+      Full-Time
+      Operates global exchanges, data, and connectivity
+      Data Scientist
+      Atlanta, GA, USA
+    </a>
+    <a href="https://email.matches.simplify.jobs/c/eJxBBB222">
+      Capgemini
+      Full-Time
+      Global consulting, technology services, outsourcing
+      Associate Data Scientist
+      $60k – $80k
+      Toronto, ON, Canada
+    </a>
+    <a href="https://email.matches.simplify.jobs/c/eJxCCC333">View Matches</a>
+    <a href="https://email.matches.simplify.jobs/u/unsub">Unsubscribe</a>
+    """
+    email = ParsedEmail(
+        id="simplify",
+        sender_name="Simplify",
+        sender_email="matches@simplify.jobs",
+        subject="New matches from Intercontinental Exchange & more",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {"Data Scientist", "Associate Data Scientist"}
+    assert all(job.source == "simplify" for job in jobs)
+    ice = next(job for job in jobs if job.title == "Data Scientist")
+    assert "Intercontinental" in ice.company
+    assert "Atlanta" in ice.location
+
+
+def test_simplify_overlay_links_read_the_previous_card():
+    html = """
+    <td>
+      <table>
+        <tr><td>
+          <p style="font-weight:700">Intercontinental Exchange</p>
+          <p>Full-Time</p>
+          <p>Operates global exchanges, data, and connectivity</p>
+          <p style="font-weight:700">Data Scientist</p>
+          <p>Atlanta, GA, USA</p>
+        </td></tr>
+      </table>
+      <div>&nbsp;</div>
+      <a href="https://email.matches.simplify.jobs/c/eJxAAA111"></a>
+      <table>
+        <tr><td>
+          <p style="font-weight:700">Capgemini</p>
+          <p>Full-Time</p>
+          <p>Global consulting, technology services, outsourcing</p>
+          <p style="font-weight:700">Associate Data Scientist</p>
+          <p>$60k – $80k</p>
+          <p>Toronto, ON, Canada</p>
+        </td></tr>
+      </table>
+      <div>&nbsp;</div>
+      <a href="https://email.matches.simplify.jobs/c/eJxBBB222"></a>
+      <table>
+        <tr><td>
+          <p style="font-weight:700">The Walt Disney Company</p>
+          <p>Full-Time</p>
+          <p>Diversified entertainment conglomerate: media, parks, streaming</p>
+          <p style="font-weight:700">Software Engineer 2</p>
+          <p>Glendale, CA, USA</p>
+        </td></tr>
+      </table>
+    </td>
+    """
+    email = ParsedEmail(
+        id="simplify-overlay",
+        sender_email="matches@simplify.jobs",
+        subject="New matches from Intercontinental Exchange & more",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {
+        "Data Scientist",
+        "Associate Data Scientist",
+        "Software Engineer 2",
+    }
+    ice = next(job for job in jobs if job.title == "Data Scientist")
+    assert "Intercontinental" in ice.company
+    assert "Atlanta" in ice.location
+
+
+def test_section_heading_jobs_is_not_a_posting():
+    html = """
+    <a href="https://u14935226.ct.sendgrid.net/ls/click?upn=WC1">A.I. Solutions Architect</a>
+    <a href="https://u14935226.ct.sendgrid.net/ls/click?upn=WC2">Data Scientist Jobs</a>
+    """
+    email = ParsedEmail(
+        id="wc",
+        sender_name="Waste Connections",
+        sender_email="opportunities@careeralerts.wasteconnections.com",
+        subject="Naveen: We've got a new job for you!",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {"A.I. Solutions Architect"}
+
+
+def test_indeed_cts_tracker_keeps_the_job_title():
+    html = """
+    <a href="https://cts.indeed.com/v3/abc111">View job</a>
+    <a href="https://cts.indeed.com/v3/abc111">Healthcare Data Scientist</a>
+    <a href="https://cts.indeed.com/v3/abc111">Learn more</a>
+    <a href="https://cts.indeed.com/v3/abc111">This is a bad match</a>
+    <a href="https://cts.indeed.com/v3/copy">2026 Indeed, Inc.</a>
+    """
+    email = ParsedEmail(
+        id="indeed-cts",
+        sender_email="donotreply@match.indeed.com",
+        subject="Healthcare Data Scientist @ EPIC Brokers",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert len(jobs) == 1
+    assert jobs[0].title == "Healthcare Data Scientist"
+    assert jobs[0].company == "EPIC Brokers"
+    assert "2026 Indeed, Inc." not in {job.title for job in jobs}
+
+
+def test_glassdoor_see_more_and_create_links_are_dropped():
+    html = """
+    <a href="https://www.glassdoor.com/partner/jobListing.htm?pos=101&guid=aaa&jobListingId=1">Data Scientist</a>
+    <a href="https://www.glassdoor.com/partner/jobListing.htm?pos=102&guid=bbb&jobListingId=2">See more jobs</a>
+    <a href="https://www.glassdoor.com/partner/jobListing.htm?pos=103&guid=ccc&jobListingId=3">Create</a>
+    """
+    email = ParsedEmail(
+        id="gd-footer",
+        sender_email="noreply@glassdoor.com",
+        subject="Data Scientist at EXL Service and 8 more jobs in New York, NY for you.",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {"Data Scientist"}
+
+
+def test_monster_click_tracker_keeps_titled_cards():
+    html = """
+    <a href="http://click.monster.com/f/a/aaa~~/job1">Associate Data Scientist</a>
+    <a href="http://click.monster.com/f/a/aaa~~/job1">VIEW JOB</a>
+    <a href="http://click.monster.com/f/a/bbb~~/job2">Data Scientist II</a>
+    <a href="http://click.monster.com/f/a/bbb~~/job2">VIEW JOB</a>
+    <a href="http://click.monster.com/f/a/ccc~~/pref">here</a>
+    """
+    email = ParsedEmail(
+        id="monster-click",
+        sender_email="monster@notifications.monster.com",
+        subject="Your job alert for: Data Scientist,",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {"Associate Data Scientist", "Data Scientist II"}
+
+
+def test_ihire_track_links_keep_the_job_title():
+    html = """
+    <a class="link" href="https://track.ihire.com/ss/c/u001.abc">Immediate need for the ASP .NET Developer</a>
+    <a href="https://track.ihire.com/ss/c/u001.abc">View</a>
+    <a class="link" href="https://track.ihire.com/ss/c/u001.def">IS Data Center Intern</a>
+    <a href="https://track.ihire.com/ss/c/pref">Email Preferences</a>
+    """
+    email = ParsedEmail(
+        id="ihire-track",
+        sender_email="jobseekers@email.ihire.com",
+        subject="[Work Your Way Job Alert] Immediate need for the ASP .NET Developer",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {
+        "Immediate need for the ASP .NET Developer",
+        "IS Data Center Intern",
+    }
+    assert "Email Preferences" not in {job.title for job in jobs}
+
+
+def test_pageup_sendgrid_click_keeps_titled_jobs():
+    html = """
+    <a href="http://sendgrid.email.pageuppeople.com/ls/click?upn=aaa">IT Manager</a>
+    <a href="http://sendgrid.email.pageuppeople.com/ls/click?upn=bbb">Director of Research Technology Services</a>
+    <a href="http://sendgrid.email.pageuppeople.com/ls/click?upn=ccc">Unsubscribe</a>
+    """
+    email = ParsedEmail(
+        id="pageup-click",
+        sender_email="jobalerts-967@mail.pageuppeople.com",
+        subject="Job Alerts Email",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {
+        "IT Manager",
+        "Director of Research Technology Services",
+    }
+
+
+def test_jobs2web_title_with_zip_is_kept():
+    html = """
+    <a href="http://jobs.enersys.com/job/Warrensburg-Process-Engineer-MO-64093-9301/1411902633/">Process Engineer - Warrensburg, MO, US, 64093-9301</a>
+    <a href="https://jobs.enersys.com/unsubscribe/">Unsubscribe</a>
+    """
+    email = ParsedEmail(
+        id="enersys",
+        sender_email="enersysdp2-jobnotification@noreply12.jobs2web.com",
+        subject="New jobs posted from jobs.enersys.com",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert len(jobs) == 1
+    assert jobs[0].title.startswith("Process Engineer")
+
+
+def test_twine_cl0_redirect_keeps_project_cards():
+    html = """
+    <a href="https://redirect.twinehq.com/CL0/https:%2F%2Fwww.twine.net%2Fprojects%2Fb9qbr0-absolute-workforce/1/abc">Absolute Workforce LLC - Lead Data Scientist</a>
+    <a href="https://redirect.twinehq.com/CL0/https:%2F%2Fwww.twine.net%2Fprojects%2Fb9qbr0-absolute-workforce/1/abc">Apply</a>
+    <a href="https://redirect.twinehq.com/CL0/https:%2F%2Fwww.twine.net%2Fprojects%2Fb9q9n0-senior-full/1/abc">Senior Full Stack Engineer</a>
+    """
+    email = ParsedEmail(
+        id="twine",
+        sender_email="no-reply@twinehq.com",
+        subject="5 new job opportunities posted in the past 24 hours",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {job.title for job in jobs} == {
+        "Absolute Workforce LLC - Lead Data Scientist",
+        "Senior Full Stack Engineer",
+    }
+
+
+def test_appcast_location_then_title_without_role_word():
+    html = """
+    <a href="https://u14935226.ct.sendgrid.net/ls/click?upn=SAF1">
+      Grove City, OH
+      Customer Advocate
+      The Customer Advocate is one of Safelite first impressions
+    </a>
+    <a href="https://u14935226.ct.sendgrid.net/ls/click?upn=SAF2">View All Jobs</a>
+    """
+    email = ParsedEmail(
+        id="safelite",
+        sender_email="safelite@hiring.appcast.io",
+        subject="Naveen: New job matches for you at Safelite.",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert len(jobs) == 1
+    assert jobs[0].title == "Customer Advocate"
+    assert jobs[0].company == "Safelite"
+
+
+def test_zoom_clinchtalent_unwraps_careers_links():
+    html = """
+    <td>
+      <strong>Principal Agentic AI Engineer</strong>
+      <p>Home Office, Downtown Seattle, Seattle, Washington, United States, 99999</p>
+      <a href="https://api.clinchtalent.com/v1/public/messages/abc/events/clicked?url=https%3A%2F%2Fcareers.zoom.us%2Fjobs%2Fprincipal-agentic-ai-engineer-seattle-washington-united-states">Read More</a>
+    </td>
+    <a href="https://api.clinchtalent.com/v1/public/messages/abc/events/clicked?url=https%3A%2F%2Fwww.zoom.com">55 Almaden Blvd San Jose, CA 95113</a>
+    """
+    email = ParsedEmail(
+        id="zoom-alert",
+        sender_email="talent.acquisition@zoom.com",
+        subject="Your Zoom Job Alerts",
+        html=html,
+    )
+    jobs = extract_from_email(email)
+    assert len(jobs) == 1
+    assert jobs[0].title == "Principal Agentic AI Engineer"
+    assert "careers.zoom.us" in jobs[0].url
+
