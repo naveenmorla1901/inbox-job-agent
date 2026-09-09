@@ -1,0 +1,15 @@
+{
+  "name": "Inbox Job Agent",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "dashboard",
+      "command": ". .venv/bin/activate && python -m app.run serve --port 8000",
+      "description": "FastAPI job dashboard at http://localhost:8000 (Mail, Matches, Follow-ups, Applications, Overview). Runs without Gmail credentials; seed sample data with `python -m app.run demo`."
+    }
+  ],
+  "ports": [
+    { "name": "dashboard", "port": 8000 }
+  ]
+}
