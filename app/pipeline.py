@@ -21,6 +21,7 @@ from .config import get_profile, get_settings
 from .db import exists, get_state, init_db, session_scope, set_state
 from .email_parse import ParsedEmail, parse_message
 from .extract_jobs import JobCandidate, extract_from_email
+from .llm_extract import extract_postings
 from .gmail_client import GmailClient
 from .job_fields import enrich_fields, normalize_visa, phone_from_text, scheduling_url_from_links
 from .llm import LLM
@@ -392,7 +393,7 @@ class EmailResult:
 
 def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult:
     settings = get_settings()
-    candidates = extract_from_email(email, limit=settings.max_jobs_per_email)
+    candidates = extract_postings(email, llm, limit=settings.max_jobs_per_email)
     result = classify_email(email, get_profile(), llm, job_count=len(candidates))
 
     # The message row has to land before anything referencing it: the dedupe lookups below
@@ -511,7 +512,7 @@ def reclassify_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailRes
 def reextract_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult:
     """Re-run link extract + scrape for mail we already stored."""
     settings = get_settings()
-    candidates = extract_from_email(email, limit=settings.max_jobs_per_email)
+    candidates = extract_postings(email, llm, limit=settings.max_jobs_per_email)
     result = classify_email(email, get_profile(), llm, job_count=len(candidates))
     record = session.get(Message, email.id)
     if record is not None:

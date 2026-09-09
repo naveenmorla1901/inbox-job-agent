@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     llm_cooldown_seconds: int = 900  # how long to skip a provider after it rate limits
     llm_gemini_gap_seconds: int = 8  # rest a Gemini key after a hit so the other account is used next
     llm_classify_body_chars: int = 4000
+    # Second extraction pass: let an LLM read the whole digest and recover postings
+    # the regex rules missed. Anchor-grounded, so URLs are never hallucinated.
+    llm_extract_digests: bool = True
+    llm_extract_body_chars: int = 40000  # Gemini's context is huge; feed most of the email
+    llm_extract_max_anchors: int = 160
 
     llm_provider: str = "none"  # legacy single-provider setting, still honoured
     gemini_api_key: str = ""
