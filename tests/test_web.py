@@ -47,14 +47,17 @@ def test_api_docs_is_gone(client):
     assert test_client.get("/openapi.json").status_code == 404
 
 
-def test_run_page_is_simple(client):
+def test_status_page_shows_auto_sync_and_no_manual_buttons(client):
     test_client, _engine = client
     response = test_client.get("/activity")
     assert response.status_code == 200
-    assert b"Check now" in response.content
-    assert b"every 30 minutes" in response.content
-    assert b"Turn on new-mail trigger" not in response.content
-    assert b"extra GitHub copy" not in response.content
+    body = response.content
+    assert b"Auto-sync" in body
+    assert b"15 minutes" in body
+    # The manual controls were removed in favour of automatic syncing.
+    assert b"Check now" not in body
+    assert b"Start fresh" not in body
+    assert b"extra GitHub copy" not in body
 
 
 def test_run_page_explains_github_copy_service(client, monkeypatch):

@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     api_token: str = "change-me"
     port: int = 8000
 
+    # Background auto-sync: the web app polls Gmail on its own every N seconds so
+    # new mail shows up without any manual "check" button.
+    auto_poll: bool = True
+    poll_interval_seconds: int = 900  # 15 minutes
+
     def path(self, value: str) -> Path:
         p = Path(value)
         return p if p.is_absolute() else ROOT / p

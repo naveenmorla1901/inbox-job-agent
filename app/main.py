@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -32,9 +35,49 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+log = logging.getLogger(__name__)
+_poller_started = False
+
+
+def _gmail_configured() -> bool:
+    settings = get_settings()
+    return bool(settings.gmail_token_json.strip()) or Path(settings.gmail_token_file).exists()
+
+
+def start_auto_poller() -> bool:
+    """Background thread that syncs Gmail every poll_interval_seconds.
+
+    New mail then shows up on its own - no manual 'check' button. Skipped under
+    pytest and when Gmail is not configured, so it never blocks tests or an
+    unconfigured instance."""
+    global _poller_started
+    settings = get_settings()
+    if _poller_started or not settings.auto_poll:
+        return False
+    if os.environ.get("PYTEST_CURRENT_TEST") or not _gmail_configured():
+        return False
+    _poller_started = True
+    interval = max(60, settings.poll_interval_seconds)
+
+    def loop() -> None:
+        time.sleep(5)  # let startup settle before the first sync
+        while True:
+            try:
+                stats = run_once()
+                log.info("auto-sync: %s", stats.as_dict())
+            except Exception:
+                log.exception("auto-sync failed; will retry next interval")
+            time.sleep(interval)
+
+    threading.Thread(target=loop, name="job-auto-poller", daemon=True).start()
+    log.info("auto-sync started: every %d min", interval // 60)
+    return True
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    start_auto_poller()
     yield
 
 
@@ -42,12 +85,54 @@ def _template_host_setup(_request: Request) -> dict:
     return {"host_setup": host_setup()}
 
 
+def _template_nav(_request: Request) -> dict:
+    """Header status shown on every page: pending follow-ups + last/next sync."""
+    settings = get_settings()
+    last_run: dict = {}
+    pending = 0
+    try:
+        with Session(get_engine()) as session:
+            last_run = load_last_run(session)
+            pending = pending_outreach_count(session)
+    except Exception:
+        pass
+    return {
+        "nav_pending": pending,
+        "nav_sync": {
+            "auto": settings.auto_poll,
+            "interval_min": max(1, settings.poll_interval_seconds // 60),
+            "last_run": last_run,
+        },
+    }
+
+
 app = FastAPI(title="Inbox Job Agent", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 templates = Jinja2Templates(
     directory=str(ROOT / "app" / "templates"),
-    context_processors=[_template_host_setup],
+    context_processors=[_template_host_setup, _template_nav],
 )
 templates.env.filters["et"] = fmt_et
+templates.env.filters["ago"] = lambda dt: _humanize_ago(dt)
+
+
+def _humanize_ago(value) -> str:
+    """'3m ago' / 'just now' from an ISO string or datetime."""
+    if not value:
+        return "never"
+    try:
+        when = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return "recently"
+    secs = (datetime.now(timezone.utc) - when).total_seconds()
+    if secs < 90:
+        return "just now"
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    return f"{int(secs // 86400)}d ago"
 
 PUBLIC_PATHS = {"/healthz", "/login", "/favicon.ico"}
 COOKIE = "ija_key"
