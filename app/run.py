@@ -193,6 +193,12 @@ def cmd_inspect(args: argparse.Namespace) -> None:
     print(f"wrote {path}")
 
 
+def cmd_eval_extract(args: argparse.Namespace) -> None:
+    from .eval_extract import run_eval_extract
+
+    run_eval_extract(since=args.since, message_id=args.one)
+
+
 def cmd_match(args: argparse.Namespace) -> None:
     """Score arbitrary text against the profile, to tune weights without touching Gmail."""
     from .matcher import match_job
@@ -269,6 +275,22 @@ def main() -> None:
     inspect_cmd.add_argument("--no-scrape", action="store_true")
     inspect_cmd.add_argument("--fixture-only", action="store_true", help="skip Gmail, use the sample alert")
     inspect_cmd.set_defaults(func=cmd_inspect)
+
+    eval_cmd = sub.add_parser(
+        "eval-extract",
+        help="list or extract one message since a date (all mail, no scrape)",
+    )
+    eval_cmd.add_argument(
+        "--since",
+        default="",
+        help="YYYY-MM-DD at 00:00 America/New_York; lists all mail after this, not GMAIL_QUERY",
+    )
+    eval_cmd.add_argument(
+        "--one",
+        default="",
+        help="Gmail message id to fetch and extract (writes data/eval/{id}.json)",
+    )
+    eval_cmd.set_defaults(func=cmd_eval_extract)
 
     args = parser.parse_args()
     args.func(args)

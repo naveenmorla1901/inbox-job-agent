@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parseaddr
 from html import unescape
+from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
@@ -34,6 +35,7 @@ class ParsedEmail:
     html: str = ""
     links: list[Link] = field(default_factory=list)
     label_ids: list[str] = field(default_factory=list)
+    rfc822_message_id: str = ""
 
     @property
     def sender_domain(self) -> str:
@@ -41,7 +43,17 @@ class ParsedEmail:
 
     @property
     def gmail_link(self) -> str:
-        return f"https://mail.google.com/mail/u/0/#inbox/{self.id}"
+        # The web UI hash is a thread id. A Gmail API message id often 404s in #inbox/.
+        key = self.thread_id or self.id
+        return f"https://mail.google.com/mail/u/0/#all/{key}"
+
+    @property
+    def gmail_search_link(self) -> str:
+        """Fallback when #all/{threadId} does not land on this message."""
+        mid = (self.rfc822_message_id or "").strip().strip("<>")
+        if not mid:
+            return ""
+        return f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{quote(mid, safe='')}"
 
     def body(self, limit: int = 20000) -> str:
         return (self.text or html_to_text(self.html))[:limit]
@@ -122,4 +134,5 @@ def parse_message(msg: dict) -> ParsedEmail:
         html=html,
         links=extract_links(html),
         label_ids=msg.get("labelIds", []) or [],
+        rfc822_message_id=headers.get("message-id", ""),
     )
