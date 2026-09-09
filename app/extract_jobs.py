@@ -168,7 +168,7 @@ COMP_LINE = re.compile(
     re.I,
 )
 JUNK_TITLE = re.compile(
-    r"(search for more|see the latest|see more jobs|view all|browse all|update your|"
+    r"(search for more|see the latest|see more jobs?|show me more|view all|browse all|update your|"
     r"unsubscribe|manage settings|privacy policy|^jobs for |^create$|"
     r"^job alert:|.+ jobs$|has not been updated|minimum base pay|job listings|"
     r"improve your alerts|telling us what you.re looking for|"
@@ -176,7 +176,11 @@ JUNK_TITLE = re.compile(
     r"gift \d+ free|^share now$|^learn why|^help$|^terms and|^conditions:)",
     re.I,
 )
-APPLY_CTA = re.compile(r"^(apply now|apply\b|view job|see job|learn more|read more)\b", re.I)
+APPLY_CTA = re.compile(
+    r"^(apply now|apply\b|view job|see job|learn more|read more|"
+    r"(?:1|one)[\s-]?click apply|quick apply|easy apply)\b",
+    re.I,
+)
 
 
 @dataclass
@@ -353,6 +357,11 @@ def is_job_url(url: str) -> bool:
     if source_of(url) == "twine" and re.search(r"/projects/[a-z0-9-]+", path, re.I):
         return True
     if source_of(url) == "zoom" and re.search(r"/jobs/[a-z0-9-]+", path, re.I):
+        return True
+    # ZipRecruiter wraps each posting in a per-job redirect: /ekm/<token> (job view)
+    # or /km/<token> (1-Click Apply). The real title rides in the anchor text, so
+    # these are postings even though the path carries no numeric id.
+    if source_of(url) == "ziprecruiter" and re.search(r"^/e?km/[A-Za-z0-9_-]{10,}", path):
         return True
     if SEARCH_PATH.search(path) and not POSTING_PATH.search(path):
         return False
