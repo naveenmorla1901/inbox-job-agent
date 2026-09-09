@@ -1,108 +1,91 @@
 {% extends "base.html" %}
 {% block title %}Overview — Inbox Job Agent{% endblock %}
 {% block content %}
-<form class="filters" method="get" action="/overview">
-  <select name="days">
-    {% for option in [1, 2, 3, 7, 14, 30, 90] %}
-    <option value="{{ option }}" {% if days == option %}selected{% endif %}>
-      last {{ option }} day{{ "s" if option > 1 else "" }}
-    </option>
-    {% endfor %}
-  </select>
-  <label class="meta">from
-    <input type="date" name="since" value="{{ since }}">
-  </label>
-  <label class="meta">to
-    <input type="date" name="until" value="{{ until }}">
-  </label>
-  <button type="submit">Apply range</button>
+<div class="page-head">
+  <div>
+    <h1>Overview</h1>
+    <div class="sub">What landed in your inbox and what the agent did with it.</div>
+  </div>
+</div>
+
+<form class="toolbar" method="get" action="/overview">
+  <div class="field">
+    <label>Window</label>
+    <select name="days" onchange="this.form.submit()">
+      {% for option in [1, 2, 3, 7, 14, 30, 90] %}
+      <option value="{{ option }}" {% if days == option %}selected{% endif %}>Last {{ option }} day{{ "s" if option > 1 else "" }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>From</label><input type="date" name="since" value="{{ since }}"></div>
+  <div class="field"><label>To</label><input type="date" name="until" value="{{ until }}"></div>
+  <div class="actions"><button type="submit" class="btn-primary">Apply range</button></div>
 </form>
 
+<div class="kpis">
+  <div class="kpi"><div class="n">{{ report.messages }}</div><div class="l">Emails processed</div></div>
+  <div class="kpi accent"><div class="n">{{ report.jobs_stored }}</div><div class="l">Postings extracted</div></div>
+  <div class="kpi good"><div class="n">{{ report.jobs_matched }}</div><div class="l">Match your profile</div></div>
+  <div class="kpi"><div class="n">{{ report.jobs_duplicates }}</div><div class="l">Repeats collapsed</div></div>
+  <div class="kpi"><div class="n">{{ report.applications_open }}</div><div class="l">Applications in progress</div></div>
+  <div class="kpi"><div class="n">{{ report.outreach_open }}</div><div class="l">Follow-ups open</div></div>
+</div>
+
 <div class="card">
-  <h3>{{ report.messages }} email{{ "s" if report.messages != 1 else "" }} processed</h3>
-  <div class="meta">Window: {{ report.window_label }} ({{ report.since }} → {{ report.until }})</div>
-  <div class="chips">
-    <span class="chip on">processed {{ report.messages }}</span>
-    <span class="chip">job alerts {{ report.categories[0][2] if report.categories else 0 }}</span>
-    <span class="chip">not job-alert {{ report.not_job_mail }}</span>
-    <span class="chip">acknowledgements {{ report.acknowledgements }}</span>
-    <span class="chip">rejections {{ report.rejections }}</span>
-    <span class="chip">unclassified {{ report.unclassified }}</span>
-    <span class="chip">follow-ups open {{ report.outreach_open }}</span>
-  </div>
+  <h3>Mail by category</h3>
+  <div class="sub" style="margin:2px 0 8px; color:var(--muted)">Window: {{ report.window_label }} ({{ report.since }} → {{ report.until }})</div>
   <table>
-    <tr><th>Category</th><th style="width:90px">Count</th></tr>
+    <thead><tr><th>Category</th><th style="width:90px">Count</th></tr></thead>
+    <tbody>
     {% for key, label, count in report.categories %}
     <tr>
-      <td>
-        {% if key == 'other' %}
-        <a href="/?category=other&days={{ report.days }}">{{ label }}</a>
-        {% else %}
-        {{ label }}
-        {% endif %}
-      </td>
+      <td>{% if key == 'other' %}<a href="/?category=other&days={{ report.days }}">{{ label }}</a>{% else %}{{ label }}{% endif %}</td>
       <td><b>{{ count }}</b></td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
 </div>
 
-<div class="card">
-  <h3>Job postings</h3>
-  <div class="chips">
-    <span class="chip">{{ report.jobs_found }} links found in alerts</span>
-    <span class="chip">{{ report.jobs_stored }} postings saved</span>
-    <span class="chip on">{{ report.jobs_matched }} match your profile</span>
-    <span class="chip">{{ report.jobs_ignored }} kept as ignored</span>
-    <span class="chip">{{ report.jobs_duplicates }} repeats collapsed</span>
+<div class="row" style="gap:14px; align-items:stretch; flex-wrap:wrap">
+  <div class="card" style="flex:1; min-width:280px">
+    <h3>Sources</h3>
+    <div class="tags mt">
+      {% for source, count in report.sources %}<span class="tag">{{ source }} · {{ count }}</span>{% else %}<span class="tag">none</span>{% endfor %}
+    </div>
+    <h3 style="margin-top:16px">Link fetches</h3>
+    <div class="tags mt">
+      {% for status, count in report.scrape_status %}
+      <span class="tag {% if status == 'ok' %}good{% elif status == 'blocked' %}warn{% endif %}">{{ status }} · {{ count }}</span>
+      {% else %}<span class="tag">none</span>{% endfor %}
+    </div>
   </div>
-  <h3 style="margin-top:14px">Where they came from</h3>
-  <div class="chips">
-    {% for source, count in report.sources %}<span class="chip">{{ source }}: {{ count }}</span>{% endfor %}
+  <div class="card" style="flex:1; min-width:280px">
+    <h3>Applications</h3>
+    <div class="tags mt">
+      {% for status, count in report.applications %}
+      <span class="tag {% if status in ('interview', 'offer', 'next_step') %}good{% endif %}">{{ status.replace("_", " ")|title }} · {{ count }}</span>
+      {% else %}<span class="tag">nothing tracked yet</span>{% endfor %}
+    </div>
+    <div class="actions"><a class="tag accent" href="/applications">Open tracker →</a></div>
   </div>
-  <h3 style="margin-top:14px">Link fetch results</h3>
-  <div class="chips">
-    {% for status, count in report.scrape_status %}
-    <span class="chip {% if status == 'ok' %}on{% endif %}">{{ status }}: {{ count }}</span>
-    {% endfor %}
-  </div>
-  {% if report.email_types %}
-  <h3 style="margin-top:14px">Unclassified mail types</h3>
-  <div class="chips">
-    {% for kind, count in report.email_types %}
-    <span class="chip">{{ kind }}: {{ count }}</span>
-    {% endfor %}
-  </div>
-  {% endif %}
-</div>
-
-<div class="card">
-  <h3>Applications ({{ report.applications_open }} in progress)</h3>
-  <div class="chips">
-    {% for status, count in report.applications %}
-    <span class="chip {% if status in ('interview', 'offer', 'next_step') %}on{% endif %}">
-      {{ status.replace("_", " ") }}: {{ count }}
-    </span>
-    {% else %}
-    <span class="chip">nothing tracked yet</span>
-    {% endfor %}
-  </div>
-  <div class="meta" style="margin-top:8px"><a href="/applications">open the tracker</a></div>
 </div>
 
 {% if report.top_jobs %}
 <div class="card">
   <h3>Best matches in this window</h3>
   <table>
-    <tr><th style="width:60px">Score</th><th>Role</th><th>Company</th><th>Source</th></tr>
+    <thead><tr><th style="width:64px">Score</th><th>Role</th><th>Company</th><th style="width:110px">Source</th></tr></thead>
+    <tbody>
     {% for job in report.top_jobs %}
     <tr>
-      <td><b>{{ "%.2f"|format(job.score) }}</b></td>
-      <td><a href="/job/{{ job.id }}">{{ job.title[:60] or "Untitled" }}</a></td>
-      <td>{{ job.company[:30] }}</td>
+      <td><span class="score {% if job.score >= 0.7 %}hi{% elif job.score >= 0.55 %}mid{% endif %}" style="min-width:0;padding:3px 8px;font-size:13px">{{ "%.2f"|format(job.score) }}</span></td>
+      <td><a href="/job/{{ job.id }}">{{ job.title[:64] or "Untitled" }}</a></td>
+      <td>{{ job.company[:32] }}</td>
       <td>{{ job.source }}</td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
 </div>
 {% endif %}

@@ -1,90 +1,88 @@
 {% extends "base.html" %}
 {% block title %}{{ job.title }} — Inbox Job Agent{% endblock %}
 {% block content %}
+<div class="page-head">
+  <div><a class="muted-link" href="/matches">← Back to matches</a></div>
+</div>
+
 <div class="card">
   <div class="row">
-    <div>
-      <h3><a href="{{ job.url }}" target="_blank" rel="noopener">{{ job.title or "Untitled role" }}</a></h3>
-      <div class="meta">
-        <span>{{ job.company }}</span>
-        {% if job.location %}<span>· {{ job.location }}</span>{% endif %}
-        {% if job.state %}<span>· {{ job.state }}</span>{% endif %}
-        <span>· {{ job.source }}{% if job.source_type %} / {{ job.source_type.replace("_", " ") }}{% endif %}</span>
-        <span>· email {{ job.received_at | et("%b %d, %Y") }}</span>
-        {% if job.posted_at %}<span>· posted {{ job.posted_at }}</span>{% endif %}
-        <span>· status: {{ job.status }}</span>
-        <span>· scrape: {{ job.scrape_status or "?" }}{% if job.extraction %} via {{ job.extraction }}{% endif %}</span>
+    <div style="min-width:0">
+      <h3 style="font-size:19px"><a href="{{ job.url }}" target="_blank" rel="noopener">{{ job.title or "Untitled role" }}</a></h3>
+      <div class="meta" style="margin-top:6px">
+        <b>{{ job.company }}</b>
+        {% if job.location %}<span class="sep">·</span><span>{{ job.location }}</span>{% endif %}
+        <span class="sep">·</span><span>{{ job.source }}{% if job.source_type %} / {{ job.source_type.replace("_", " ") }}{% endif %}</span>
+        <span class="sep">·</span><span>email {{ job.received_at | et("%b %d, %Y") }}</span>
+        {% if job.posted_at %}<span class="sep">·</span><span>posted {{ job.posted_at }}</span>{% endif %}
       </div>
-      <div class="chips">
-        {% if job.employment_type %}<span class="chip">{{ job.employment_type }}</span>{% endif %}
-        {% if job.salary %}<span class="chip on">{{ job.salary }}</span>{% endif %}
-        {% if job.visa_sponsorship %}<span class="chip">{{ job.visa_sponsorship }}</span>{% endif %}
-        {% if job.experience_required %}<span class="chip">{{ job.experience_required }}</span>{% endif %}
-        {% if job.posting_id %}<span class="chip">id {{ job.posting_id }}</span>{% endif %}
+      <div class="tags mt">
+        <span class="tag {% if job.status != 'new' %}accent{% endif %}">status: {{ job.status }}</span>
+        <span class="tag {% if job.scrape_status == 'ok' %}good{% elif job.scrape_status == 'blocked' %}warn{% endif %}">fetch: {{ job.scrape_status or "?" }}{% if job.extraction %} · {{ job.extraction }}{% endif %}</span>
+        {% if job.employment_type %}<span class="tag">{{ job.employment_type }}</span>{% endif %}
+        {% if job.salary %}<span class="tag good">{{ job.salary }}</span>{% endif %}
+        {% if job.visa_sponsorship %}<span class="tag warn">{{ job.visa_sponsorship }}</span>{% endif %}
+        {% if job.experience_required %}<span class="tag">{{ job.experience_required }}</span>{% endif %}
       </div>
-      <div class="meta">
-        <a href="{{ job.url }}" target="_blank" rel="noopener" class="joblink">{{ job.url }}</a>
+      <div class="meta" style="margin-top:8px"><a href="{{ job.url }}" target="_blank" rel="noopener" class="joblink">{{ job.url }}</a></div>
+    </div>
+    <div style="text-align:center">
+      <div class="score {% if job.score >= 0.7 %}hi{% elif job.score >= 0.55 %}mid{% endif %}" style="min-width:64px;font-size:20px">{{ "%.2f"|format(job.score) }}</div>
+      <div class="meta" style="justify-content:center; margin-top:8px; font-size:11.5px">
+        <span title="title fit">T {{ "%.2f"|format(job.title_score) }}</span>
+        <span title="skills">S {{ "%.2f"|format(job.skill_score) }}</span>
+        <span title="resume">R {{ "%.2f"|format(job.resume_score) }}</span>
       </div>
     </div>
-    <div class="score {% if job.score >= 0.7 %}s-hi{% elif job.score >= 0.55 %}s-mid{% else %}s-lo{% endif %}">
-      {{ "%.2f"|format(job.score) }}
-    </div>
-  </div>
-  <div class="chips">
-    <span class="chip">title {{ "%.2f"|format(job.title_score) }}</span>
-    <span class="chip">skills {{ "%.2f"|format(job.skill_score) }}</span>
-    <span class="chip">resume {{ "%.2f"|format(job.resume_score) }}</span>
   </div>
   <div class="actions">
+    <a class="tag" href="{{ job.url }}" target="_blank" rel="noopener">Open posting →</a>
+    <span class="divider"></span>
     {% for action in ["saved", "applied", "ignored", "new"] if action != job.status %}
     <form method="post" action="/job/{{ job.id }}/status">
       <input type="hidden" name="status" value="{{ action }}">
       <input type="hidden" name="redirect" value="/job/{{ job.id }}">
-      <button type="submit">{{ action }}</button>
+      <button type="submit" class="btn-sm btn-ghost">{{ action|title }}</button>
     </form>
     {% endfor %}
   </div>
 </div>
 
-{% if job.required_skills %}
-<div class="card">
-  <h3>Skills on the posting</h3>
-  <div class="chips">
-    {% for skill in (job.required_skills or "").split(", ") if skill %}
-    <span class="chip">{{ skill }}</span>{% endfor %}
+<div class="row" style="gap:14px; align-items:stretch; flex-wrap:wrap">
+  <div class="card" style="flex:1; min-width:260px">
+    <h3>Matched skills</h3>
+    <div class="tags mt">
+      {% for skill in (job.matched_skills or "").split(", ") if skill %}<span class="tag good">{{ skill }}</span>{% else %}<span class="tag">none</span>{% endfor %}
+    </div>
+    <h3 style="margin-top:16px">Not mentioned</h3>
+    <div class="tags mt">
+      {% for skill in (job.missing_skills or "").split(", ") if skill %}<span class="tag">{{ skill }}</span>{% else %}<span class="tag">—</span>{% endfor %}
+    </div>
   </div>
-</div>
-{% endif %}
-
-<div class="card">
-  <h3>Matched skills</h3>
-  <div class="chips">
-    {% for skill in (job.matched_skills or "").split(", ") if skill %}
-    <span class="chip on">{{ skill }}</span>{% endfor %}
+  {% if job.required_skills %}
+  <div class="card" style="flex:1; min-width:260px">
+    <h3>Skills on the posting</h3>
+    <div class="tags mt">
+      {% for skill in (job.required_skills or "").split(", ") if skill %}<span class="tag">{{ skill }}</span>{% endfor %}
+    </div>
   </div>
-  <h3 style="margin-top:14px">Not mentioned</h3>
-  <div class="chips">
-    {% for skill in (job.missing_skills or "").split(", ") if skill %}
-    <span class="chip">{{ skill }}</span>{% endfor %}
-  </div>
+  {% endif %}
 </div>
 
 {% if message %}
 <div class="card">
   <h3>Came from</h3>
-  <div class="meta">
+  <div class="meta" style="margin-top:6px">
     <span>{{ message.sender }} &lt;{{ message.sender_email }}&gt;</span>
-    <span>· {{ message.subject }}</span>
-    <span>· {{ message.jobs_matched }}/{{ message.jobs_found }} matched</span>
+    <span class="sep">·</span><span>{{ message.subject }}</span>
+    <span class="sep">·</span><span>{{ message.jobs_matched }}/{{ message.jobs_found }} matched</span>
   </div>
-  <div class="actions">
-    <a href="https://mail.google.com/mail/u/0/#inbox/{{ message.id }}" target="_blank" rel="noopener">open mail</a>
-  </div>
+  <div class="actions"><a class="tag" href="https://mail.google.com/mail/u/0/#inbox/{{ message.id }}" target="_blank" rel="noopener">Open mail →</a></div>
 </div>
 {% endif %}
 
 <div class="card">
   <h3>Description</h3>
-  <pre>{{ job.description or "(not scraped — open the link)" }}</pre>
+  <pre>{{ job.description or "(not scraped — open the posting link)" }}</pre>
 </div>
 {% endblock %}

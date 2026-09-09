@@ -1,90 +1,112 @@
 {% extends "base.html" %}
 {% block title %}Matches — Inbox Job Agent{% endblock %}
 {% block content %}
-<form class="filters" method="get" action="/matches">
-  <input type="search" name="q" value="{{ q }}" placeholder="title, company, keyword">
-  <select name="status">
-    {% for option in ["new", "saved", "applied", "ignored", "all"] %}
-    <option value="{{ option }}" {% if status == option %}selected{% endif %}>{{ option }}</option>
-    {% endfor %}
-  </select>
-  <select name="show">
-    <option value="matched" {% if show == 'matched' %}selected{% endif %}>matches only</option>
-    <option value="all" {% if show == 'all' %}selected{% endif %}>every posting received</option>
-  </select>
-  <select name="duplicates">
-    <option value="hide" {% if duplicates == 'hide' %}selected{% endif %}>
-      hide repeats{% if duplicate_count %} ({{ duplicate_count }}){% endif %}
-    </option>
-    <option value="show" {% if duplicates == 'show' %}selected{% endif %}>show repeats</option>
-  </select>
-  <select name="days">
-    {% for option in [1, 2, 3, 7, 14, 30, 90] %}
-    <option value="{{ option }}" {% if days == option %}selected{% endif %}>{{ option }}d</option>
-    {% endfor %}
-  </select>
-  <input type="number" name="min_score" step="0.05" min="0" max="1" value="{{ min_score }}" style="width:90px">
-  <button type="submit">Filter</button>
+<div class="page-head">
+  <div>
+    <h1>Matches</h1>
+    <div class="sub">Postings scored against your profile. Filter, search, and track each one.</div>
+  </div>
+</div>
+
+<form class="toolbar" method="get" action="/matches">
+  <div class="field grow">
+    <label>Search</label>
+    <input type="search" name="q" value="{{ q }}" placeholder="Title, company, or keyword…">
+  </div>
+  <div class="field">
+    <label>Show</label>
+    <select name="show">
+      <option value="matched" {% if show == 'matched' %}selected{% endif %}>Matches only</option>
+      <option value="all" {% if show == 'all' %}selected{% endif %}>Every posting</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Status</label>
+    <select name="status">
+      {% for option in ["new", "saved", "applied", "ignored", "all"] %}
+      <option value="{{ option }}" {% if status == option %}selected{% endif %}>{{ option|title }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label>Repeats</label>
+    <select name="duplicates">
+      <option value="hide" {% if duplicates == 'hide' %}selected{% endif %}>Hide{% if duplicate_count %} ({{ duplicate_count }}){% endif %}</option>
+      <option value="show" {% if duplicates == 'show' %}selected{% endif %}>Show</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Window</label>
+    <select name="days">
+      {% for option in [1, 2, 3, 7, 14, 30, 90] %}
+      <option value="{{ option }}" {% if days == option %}selected{% endif %}>{{ option }}d</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label>Min score</label>
+    <input type="number" name="min_score" step="0.05" min="0" max="1" value="{{ "%.2f"|format(min_score) }}" style="width:82px">
+  </div>
+  <div class="actions"><button type="submit" class="btn-primary">Filter</button></div>
 </form>
 
+{% set ns = namespace(total=0) %}
+{% for _day, _jobs in day_groups %}{% set ns.total = ns.total + _jobs|length %}{% endfor %}
 {% if not day_groups %}
-  <p class="empty">No matching jobs in this window. Open <a href="/">Mail</a> to see what each email produced.</p>
+<div class="empty">
+  <div class="big">No matching jobs in this window</div>
+  Try widening the window or switch “Show” to <b>Every posting</b>. Open <a href="/">Mail</a> to see what each email produced.
+</div>
+{% else %}
+<p class="result-count">{{ ns.total }} posting{{ "s" if ns.total != 1 else "" }}</p>
 {% endif %}
 
 {% for day, jobs in day_groups %}
-<h2 class="day-head">{{ day }}</h2>
+<div class="day-head">{{ day }}</div>
 {% for job in jobs %}
 {% set mail = messages_by_id.get(job.message_id) %}
-<div class="card">
+<div class="card hover">
   <div class="row">
-    <div>
+    <div style="min-width:0">
       <h3><a href="{{ job.url }}" target="_blank" rel="noopener">{{ job.title or "Untitled role" }}</a></h3>
-      <div class="meta">
-        <span>{{ job.company or job.source }}</span>
-        {% if job.location %}<span>· {{ job.location }}</span>{% endif %}
-        {% if job.state %}<span>· {{ job.state }}</span>{% endif %}
-        <span>· {{ job.source }}</span>
-        <span>· {{ job.received_at | et("%I:%M %p ET") }}</span>
-        {% if job.posted_at %}<span>· posted {{ job.posted_at }}</span>{% endif %}
-        {% if job.salary %}<span>· {{ job.salary }}</span>{% endif %}
-        {% if job.visa_sponsorship %}<span>· {{ job.visa_sponsorship }}</span>{% endif %}
-        {% if not job.matched %}<span>· below threshold</span>{% endif %}
-        {% if job.duplicate_of %}<span>· repeat of #{{ job.duplicate_of }}</span>{% endif %}
+      <div class="meta" style="margin-top:5px">
+        <b>{{ job.company or job.source }}</b>
+        {% if job.location %}<span class="sep">·</span><span>{{ job.location }}</span>{% endif %}
+        <span class="sep">·</span><span>{{ job.source }}</span>
+        <span class="sep">·</span><span>{{ job.received_at | et("%b %d, %I:%M %p ET") }}</span>
+        {% if job.salary %}<span class="tag good">{{ job.salary }}</span>{% endif %}
+        {% if job.posted_at %}<span class="sep">·</span><span>posted {{ job.posted_at }}</span>{% endif %}
+        {% if job.visa_sponsorship %}<span class="tag warn">{{ job.visa_sponsorship }}</span>{% endif %}
+        {% if job.duplicate_of %}<span class="tag">repeat of #{{ job.duplicate_of }}</span>{% endif %}
+        {% if not job.matched %}<span class="tag">below threshold</span>{% endif %}
       </div>
       {% if mail %}
-      <div class="meta">
-        from
-        <a href="/?days={{ days }}">{{ mail.subject[:80] or "(no subject)" }}</a>
-        · {{ mail.sender }}
+      <div class="meta" style="margin-top:4px">from <a class="muted-link" href="/?days={{ days }}">{{ mail.subject[:80] or "(no subject)" }}</a> · {{ mail.sender }}</div>
+      {% endif %}
+      {% set skills = (job.matched_skills or "").split(", ") | select | list %}
+      {% if skills %}
+      <div class="tags mt">
+        {% for skill in skills %}<span class="tag good">{{ skill }}</span>{% endfor %}
       </div>
       {% endif %}
-      <div class="meta">
-        <a href="{{ job.url }}" target="_blank" rel="noopener" class="joblink">{{ job.url }}</a>
-      </div>
-      <div class="chips">
-        {% for skill in (job.matched_skills or "").split(", ") if skill %}
-        <span class="chip on">{{ skill }}</span>
-        {% endfor %}
-      </div>
     </div>
-    <div style="text-align:right">
-      <div class="score {% if job.score >= 0.7 %}s-hi{% elif job.score >= 0.55 %}s-mid{% else %}s-lo{% endif %}">
-        {{ "%.2f"|format(job.score) }}
-      </div>
-      <div class="meta"><a href="/job/{{ job.id }}">details</a></div>
+    <div style="text-align:right; display:flex; flex-direction:column; align-items:flex-end; gap:6px">
+      <div class="score {% if job.score >= 0.7 %}hi{% elif job.score >= 0.55 %}mid{% endif %}">{{ "%.2f"|format(job.score) }}</div>
+      <a class="muted-link" style="font-size:12.5px" href="/job/{{ job.id }}">Details →</a>
     </div>
   </div>
   <div class="actions">
-    <a href="{{ job.url }}" target="_blank" rel="noopener">open posting</a>
-    <a href="https://mail.google.com/mail/u/0/#inbox/{{ job.message_id }}" target="_blank" rel="noopener">open mail</a>
+    <a class="tag" href="{{ job.url }}" target="_blank" rel="noopener">Open posting →</a>
+    <a class="tag" href="https://mail.google.com/mail/u/0/#inbox/{{ job.message_id }}" target="_blank" rel="noopener">Open mail</a>
+    <span class="divider"></span>
+    <span class="tag {% if job.status != 'new' %}accent{% endif %}">{{ job.status|title }}</span>
     {% for action in ["saved", "applied", "ignored", "new"] if action != job.status %}
     <form method="post" action="/job/{{ job.id }}/status">
       <input type="hidden" name="status" value="{{ action }}">
       <input type="hidden" name="redirect" value="{{ request.url.path }}?{{ request.url.query }}">
-      <button type="submit">{{ action }}</button>
+      <button type="submit" class="btn-sm btn-ghost">{{ action|title }}</button>
     </form>
     {% endfor %}
-    <span class="chip">status: {{ job.status }}</span>
   </div>
 </div>
 {% endfor %}

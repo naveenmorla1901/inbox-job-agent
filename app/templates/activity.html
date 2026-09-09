@@ -1,83 +1,61 @@
 {% extends "base.html" %}
-{% block title %}Run — Inbox Job Agent{% endblock %}
+{% block title %}Status — Inbox Job Agent{% endblock %}
 {% block content %}
 {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
 {% if error %}<div class="flash bad">{{ error }}</div>{% endif %}
 
-<div class="card">
-  <h3>Run</h3>
-  <p class="meta" style="margin:8px 0 14px">
-    Cloud Scheduler checks Gmail every 30 minutes. Each run only reads new mail, one email at a time.
-    Pushing to GitHub <code>main</code> deploys the Docker image. Your Gmail is not changed.
-  </p>
-  <div class="chips">
-    <span class="chip on">every 30 minutes</span>
-    {% if last_run.started_at %}
-    <span class="chip">last check {{ last_run.started_at[:16] }} UTC</span>
-    <span class="chip">{{ last_run.processed|default(0) }} analyzed</span>
-    <span class="chip">{{ last_run.jobs_matched|default(0) }} matches</span>
-    {% else %}
-    <span class="chip">no check yet</span>
-    {% endif %}
-    {% if host_setup.on_cloud %}
-    <span class="chip {% if host_setup.gmail_ok %}on{% endif %}">
-      Gmail token {% if host_setup.gmail_ok %}attached{% else %}missing{% endif %}
-    </span>
-    <span class="chip {% if host_setup.postgres %}on{% endif %}">
-      {% if host_setup.postgres %}Neon Postgres{% else %}SQLite (will wipe on sleep){% endif %}
-    </span>
-    {% endif %}
+<div class="page-head">
+  <div>
+    <h1>Status</h1>
+    <div class="sub">The agent checks Gmail on its own and processes new mail one email at a time.</div>
   </div>
-  <div class="actions">
-    <form method="post" action="/activity/check" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Checking…'">
-      <input type="hidden" name="next" value="/activity">
-      <button type="submit" class="primary">Check now</button>
-    </form>
-    <form method="post" action="/activity/reset" onsubmit="return confirm('Clear every job and email this app saved? Gmail is not touched. Only mail that arrives after this moment will be analyzed.')">
-      <button type="submit" class="danger">Start fresh</button>
-    </form>
+</div>
+
+<div class="kpis">
+  <div class="kpi good">
+    <div class="n">{{ nav_sync.interval_min }}<span style="font-size:15px; font-weight:600"> min</span></div>
+    <div class="l">Auto-sync interval</div>
+  </div>
+  <div class="kpi">
+    <div class="n" style="font-size:18px">{% if last_run.started_at %}{{ last_run.started_at | ago }}{% else %}—{% endif %}</div>
+    <div class="l">Last synced</div>
+  </div>
+  <div class="kpi accent"><div class="n">{{ last_run.processed|default(0) }}</div><div class="l">Analyzed last run</div></div>
+  <div class="kpi good"><div class="n">{{ last_run.jobs_matched|default(0) }}</div><div class="l">Matches last run</div></div>
+</div>
+
+<div class="card">
+  <h3>How syncing works</h3>
+  <p class="lede">The dashboard automatically checks Gmail <b>every {{ nav_sync.interval_min }} minutes</b> and analyzes anything new — no button to press. Each run reads only new mail (nothing is re-processed), and your Gmail is never modified. Pushing to GitHub <code>main</code> redeploys the app.</p>
+  <div class="tags mt">
+    <span class="tag good">Auto-sync every {{ nav_sync.interval_min }} minutes</span>
+    {% if last_run.started_at %}<span class="tag">last check {{ last_run.started_at[:16] }} UTC</span>{% else %}<span class="tag">no check yet</span>{% endif %}
+    {% if host_setup.on_cloud %}
+    <span class="tag {% if host_setup.gmail_ok %}good{% else %}bad{% endif %}">Gmail token {% if host_setup.gmail_ok %}attached{% else %}missing{% endif %}</span>
+    <span class="tag {% if host_setup.postgres %}good{% else %}warn{% endif %}">{% if host_setup.postgres %}Postgres (persistent){% else %}SQLite (resets on sleep){% endif %}</span>
+    {% endif %}
   </div>
 </div>
 
 {% if last_run.emails %}
 <div class="card">
-  <h3>Last check</h3>
-  <table>
-    <tr>
-      <th>From</th>
-      <th>Subject</th>
-      <th>Type</th>
-      <th style="width:90px">Jobs</th>
-    </tr>
+  <h3>Most recent sync</h3>
+  <table style="margin-top:8px">
+    <thead><tr><th>From</th><th>Subject</th><th style="width:130px">Type</th><th style="width:90px">Jobs</th></tr></thead>
+    <tbody>
     {% for item in last_run.emails %}
     <tr>
       <td>{{ item.sender or "—" }}</td>
       <td>
-        {% if item.id %}
-        <a href="https://mail.google.com/mail/u/0/#inbox/{{ item.id }}" target="_blank" rel="noopener">
-          {{ item.subject or "(no subject)" }}
-        </a>
-        {% else %}
-        {{ item.subject or "(no subject)" }}
-        {% endif %}
+        {% if item.id %}<a href="https://mail.google.com/mail/u/0/#inbox/{{ item.id }}" target="_blank" rel="noopener">{{ item.subject or "(no subject)" }}</a>
+        {% else %}{{ item.subject or "(no subject)" }}{% endif %}
         {% if item.error %}<div class="meta">{{ item.error }}</div>{% endif %}
       </td>
-      <td>
-        {% if item.error %}
-        <span class="chip">failed</span>
-        {% else %}
-        <span class="chip">{{ (item.category or "other")|replace("_", " ") }}</span>
-        {% endif %}
-      </td>
-      <td>
-        {% if item.jobs_found %}
-        {{ item.jobs_matched }}/{{ item.jobs_found }} match
-        {% else %}
-        —
-        {% endif %}
-      </td>
+      <td>{% if item.error %}<span class="tag bad">failed</span>{% else %}<span class="tag">{{ (item.category or "other")|replace("_", " ")|title }}</span>{% endif %}</td>
+      <td>{% if item.jobs_found %}{{ item.jobs_matched }}/{{ item.jobs_found }}{% else %}—{% endif %}</td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
 </div>
 {% endif %}
@@ -85,9 +63,7 @@
 {% if last_run.errors %}
 <div class="card">
   <h3>Errors</h3>
-  {% for err in last_run.errors %}
-  <div class="meta">{{ err }}</div>
-  {% endfor %}
+  {% for err in last_run.errors %}<div class="meta">{{ err }}</div>{% endfor %}
 </div>
 {% endif %}
 {% endblock %}

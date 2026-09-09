@@ -4,104 +4,213 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Inbox Job Agent{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%234f46e5'/><text x='50' y='68' font-size='60' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='700'>J</text></svg>">
   <style>
     :root {
-      --bg: #0f1115; --panel: #171a21; --panel-2: #1d212a; --line: #262b36;
-      --text: #e6e9ef; --muted: #9aa4b2; --accent: #6ea8fe; --good: #3fb950;
-      --warn: #d29922; --bad: #f85149;
+      --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f9fafb;
+      --line: #e5e7eb; --line-2: #eef0f3;
+      --text: #111827; --muted: #6b7280; --faint: #9ca3af;
+      --accent: #4f46e5; --accent-soft: #eef2ff; --accent-line: #c7d2fe;
+      --good: #15803d; --good-soft: #f0fdf4; --good-line: #bbf7d0;
+      --warn: #b45309; --warn-soft: #fffbeb; --warn-line: #fde68a;
+      --bad: #b91c1c; --bad-soft: #fef2f2; --bad-line: #fecaca;
+      --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.04);
+      --shadow-md: 0 4px 12px rgba(16,24,40,.08);
+      --radius: 12px;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text);
-      font: 15px/1.5 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 14.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
-    header { position: sticky; top: 0; z-index: 5; background: var(--panel);
-      border-bottom: 1px solid var(--line); padding: 12px 20px;
-      display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
-    header h1 { font-size: 16px; margin: 0; letter-spacing: .3px; }
-    nav { display: flex; gap: 16px; }
-    nav a { color: var(--muted); font-size: 14px; }
-    nav a.active { color: var(--text); font-weight: 600; }
-    .badge { background: var(--bad); color: #fff; border-radius: 10px;
-      padding: 0 7px; font-size: 12px; margin-left: 6px; }
-    main { max-width: 1080px; margin: 0 auto; padding: 24px 20px 80px; }
-    .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
-    input, select, button, textarea { background: var(--panel-2); color: var(--text);
-      border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 14px; }
-    button { cursor: pointer; }
-    button:hover { border-color: var(--accent); }
-    button.primary { background: #1d3d72; border-color: #3d6cb3; color: #fff; }
-    button.danger { background: #3a1d1d; border-color: #7a3030; }
-    .flash { background: #16301c; border: 1px solid #24422b; color: var(--good);
-      border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
-    .flash.bad { background: #3a1d1d; border-color: #7a3030; color: #ffb1ad; }
-    button:disabled { opacity: .6; cursor: wait; }
-    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-      padding: 14px 16px; margin-bottom: 12px; }
-    .card h3 { margin: 0 0 4px; font-size: 16px; }
-    .meta { color: var(--muted); font-size: 13px; display: flex; gap: 10px; flex-wrap: wrap; }
-    .row { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
-    .score { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 18px; }
-    .s-hi { color: var(--good); } .s-mid { color: var(--warn); } .s-lo { color: var(--muted); }
-    .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-    .chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
-      padding: 2px 9px; font-size: 12px; color: var(--muted); }
-    .chip.on { color: var(--good); border-color: #24422b; }
-    .actions { display: flex; gap: 6px; margin-top: 10px; }
-    .actions form { display: inline; }
-    .empty { color: var(--muted); text-align: center; padding: 60px 0; }
-    pre { white-space: pre-wrap; word-wrap: break-word; background: var(--panel-2);
-      border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-    th { color: var(--muted); font-weight: 500; }
-    .u-high { border-left: 3px solid var(--bad); }
-    .u-normal { border-left: 3px solid var(--line); }
-    .day-head { color: var(--muted); font-size: 13px; font-weight: 600;
-      letter-spacing: .04em; text-transform: uppercase; margin: 22px 0 10px; }
-    .nested { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
-    .joblink { font-size: 12px; color: var(--muted); word-break: break-all; }
+    h1, h2, h3, h4 { margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+
+    /* ---------- Header ---------- */
+    header {
+      position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.85);
+      backdrop-filter: saturate(180%) blur(8px); border-bottom: 1px solid var(--line);
+    }
+    .bar { max-width: 1180px; margin: 0 auto; padding: 0 24px; height: 58px;
+      display: flex; align-items: center; gap: 26px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700;
+      font-size: 15px; color: var(--text); white-space: nowrap; }
+    .brand:hover { text-decoration: none; }
+    .brand .mark { width: 26px; height: 26px; border-radius: 8px; background: var(--accent);
+      color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 15px; }
+    nav.tabs { display: flex; gap: 4px; flex: 1; overflow-x: auto; }
+    nav.tabs a { color: var(--muted); font-size: 14px; font-weight: 550; padding: 8px 12px;
+      border-radius: 8px; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+    nav.tabs a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
+    nav.tabs a.active { color: var(--accent); background: var(--accent-soft); }
+    .count-badge { background: var(--bad); color: #fff; border-radius: 999px;
+      padding: 0 6px; font-size: 11px; font-weight: 700; min-width: 17px; text-align: center; }
+    .sync { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px;
+      color: var(--muted); white-space: nowrap; }
+    .sync .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good);
+      box-shadow: 0 0 0 3px var(--good-soft); }
+    .sync .dot.off { background: var(--faint); box-shadow: 0 0 0 3px var(--line); }
+    .sync b { color: var(--text); font-weight: 600; }
+
+    /* ---------- Layout ---------- */
+    main { max-width: 1180px; margin: 0 auto; padding: 26px 24px 90px; }
+    .page-head { display: flex; align-items: flex-end; justify-content: space-between;
+      gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+    .page-head h1 { font-size: 22px; }
+    .page-head .sub { color: var(--muted); font-size: 13.5px; margin-top: 3px; }
+
+    /* ---------- Toolbar / filters ---------- */
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 14px 16px; margin-bottom: 20px; box-shadow: var(--shadow); }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    .field label { font-size: 11.5px; font-weight: 600; color: var(--faint);
+      text-transform: uppercase; letter-spacing: .04em; }
+    input, select, button, textarea {
+      font: inherit; color: var(--text); background: var(--surface);
+      border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px;
+      transition: border-color .12s, box-shadow .12s;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent-line);
+      box-shadow: 0 0 0 3px var(--accent-soft); }
+    select { cursor: pointer; }
+    button { cursor: pointer; font-weight: 600; }
+    button:hover { border-color: var(--faint); }
+    .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #4338ca; border-color: #4338ca; }
+    .btn-ghost { background: var(--surface); }
+    .btn-sm { padding: 5px 9px; font-size: 12.5px; border-radius: 8px; }
+    .btn-danger { color: var(--bad); border-color: var(--bad-line); background: var(--bad-soft); }
+    .toolbar .grow { flex: 1; min-width: 160px; }
+    .toolbar .actions { margin-left: auto; display: flex; gap: 8px; align-items: flex-end; }
+    .result-count { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+
+    /* ---------- Cards / list ---------- */
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 16px 18px; margin-bottom: 14px; box-shadow: var(--shadow); }
+    .card.hover:hover { box-shadow: var(--shadow-md); border-color: #d7dbe2; }
+    .card h3 { font-size: 15.5px; }
+    .card h3 a { color: var(--text); }
+    .row { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+    .meta { color: var(--muted); font-size: 13px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .meta .sep { color: var(--line); }
+    .lede { margin: 9px 0 0; color: #374151; font-size: 13.5px; }
+    .joblink { font-size: 12px; color: var(--faint); word-break: break-all; }
     .joblink:hover { color: var(--accent); }
-    .setup-steps { margin: 8px 0 0; padding-left: 18px; color: var(--text); }
-    .setup-steps li { margin: 4px 0; }
+
+    /* ---------- Pills / tags ---------- */
+    .tag { display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2);
+      border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12px;
+      color: var(--muted); font-weight: 550; white-space: nowrap; }
+    .tag.accent { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+    .tag.good { background: var(--good-soft); border-color: var(--good-line); color: var(--good); }
+    .tag.warn { background: var(--warn-soft); border-color: var(--warn-line); color: var(--warn); }
+    .tag.bad { background: var(--bad-soft); border-color: var(--bad-line); color: var(--bad); }
+    .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tags.mt { margin-top: 10px; }
+
+    /* ---------- Score ---------- */
+    .score { display: inline-grid; place-items: center; min-width: 52px; padding: 6px 8px;
+      border-radius: 10px; font-variant-numeric: tabular-nums; font-weight: 700; font-size: 16px;
+      border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); }
+    .score.hi { background: var(--good-soft); border-color: var(--good-line); color: var(--good); }
+    .score.mid { background: var(--warn-soft); border-color: var(--warn-line); color: var(--warn); }
+
+    /* ---------- Actions ---------- */
+    .actions { display: flex; gap: 7px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+    .actions form { display: inline; }
+    .actions .divider { flex: 1; }
+
+    /* ---------- Tables ---------- */
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    thead th { text-align: left; padding: 9px 12px; color: var(--faint); font-weight: 600;
+      font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em;
+      border-bottom: 1px solid var(--line); }
+    tbody td { padding: 11px 12px; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: var(--surface-2); }
+
+    /* ---------- KPIs ---------- */
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px; margin-bottom: 20px; }
+    .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 15px 16px; box-shadow: var(--shadow); }
+    .kpi .n { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+    .kpi .l { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+    .kpi.accent .n { color: var(--accent); }
+    .kpi.good .n { color: var(--good); }
+
+    /* ---------- Day divider ---------- */
+    .day-head { color: var(--faint); font-size: 12px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; margin: 26px 0 12px; display: flex; align-items: center; gap: 10px; }
+    .day-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+    /* ---------- Nested job rows inside a mail card ---------- */
+    .subitem { padding: 12px 0; border-top: 1px solid var(--line-2); }
+    .subitem:first-of-type { border-top: 1px solid var(--line); margin-top: 12px; }
+
+    /* ---------- Misc ---------- */
+    .empty { text-align: center; padding: 64px 20px; color: var(--muted); }
+    .empty .big { font-size: 17px; color: var(--text); font-weight: 600; margin-bottom: 6px; }
+    .flash { border-radius: var(--radius); padding: 12px 16px; margin-bottom: 18px; font-size: 14px;
+      background: var(--good-soft); border: 1px solid var(--good-line); color: var(--good); }
+    .flash.bad { background: var(--bad-soft); border-color: var(--bad-line); color: var(--bad); }
+    .notice { background: var(--warn-soft); border: 1px solid var(--warn-line); color: var(--warn);
+      border-radius: var(--radius); padding: 14px 16px; margin-bottom: 18px; }
+    .notice ol { margin: 8px 0 0; padding-left: 20px; } .notice li { margin: 4px 0; }
+    code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px;
+      padding: 1px 5px; font-size: 12.5px; }
+    pre { white-space: pre-wrap; word-wrap: break-word; background: var(--surface-2);
+      border: 1px solid var(--line); border-radius: 10px; padding: 15px; font-size: 13px;
+      color: #374151; max-height: 520px; overflow: auto; }
+    .muted-link { color: var(--muted); }
   </style>
 </head>
 <body>
 <header>
-  <h1>Inbox Job Agent</h1>
-  <nav>
-    <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Mail</a>
-    <a href="/matches" class="{% if request.url.path == '/matches' %}active{% endif %}">Matches</a>
-    <a href="/outreach" class="{% if request.url.path.startswith('/outreach') %}active{% endif %}">
-      Follow-ups{% if pending_outreach %}<span class="badge">{{ pending_outreach }}</span>{% endif %}
-    </a>
-    <a href="/applications" class="{% if request.url.path.startswith('/application') %}active{% endif %}">
-      Applications
-    </a>
-    <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}">Run</a>
-  </nav>
+  <div class="bar">
+    <a class="brand" href="/"><span class="mark">J</span>Inbox&nbsp;Job&nbsp;Agent</a>
+    <nav class="tabs">
+      <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Mail</a>
+      <a href="/matches" class="{% if request.url.path == '/matches' %}active{% endif %}">Matches</a>
+      <a href="/outreach" class="{% if request.url.path.startswith('/outreach') %}active{% endif %}">
+        Follow-ups{% if nav_pending %}<span class="count-badge">{{ nav_pending }}</span>{% endif %}
+      </a>
+      <a href="/applications" class="{% if request.url.path.startswith('/application') %}active{% endif %}">Applications</a>
+      <a href="/overview" class="{% if request.url.path == '/overview' %}active{% endif %}">Overview</a>
+      <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}">Status</a>
+    </nav>
+    {% if request.url.path != '/login' %}
+    <span class="sync" title="Automatically checks Gmail on a schedule">
+      <span class="dot {% if not nav_sync.auto %}off{% endif %}"></span>
+      Auto-sync · every <b>{{ nav_sync.interval_min }} min</b>
+      {% if nav_sync.last_run and nav_sync.last_run.started_at %}
+        · synced {{ nav_sync.last_run.started_at | ago }}
+      {% endif %}
+    </span>
+    {% endif %}
+  </div>
 </header>
 <main>
 {% if host_setup and host_setup.warning and request.url.path != "/login" %}
-<div class="flash bad">
+<div class="notice">
   {% if host_setup.wrong_service %}
   <b>This is the extra GitHub copy, not the real dashboard.</b>
-  <p class="meta" style="color:inherit;margin:8px 0 0">
-    You opened Cloud Run service <code>{{ host_setup.service }}</code> (usually europe-west1).
-    That copy has no Gmail token, Neon database, or dashboard password.
-  </p>
-  <ol class="setup-steps">
+  <p style="margin:8px 0 0">You opened Cloud Run service <code>{{ host_setup.service }}</code> (usually europe-west1). That copy has no Gmail token, database, or password.</p>
+  <ol>
     <li>Open the real site: <a href="{{ host_setup.real_url }}">{{ host_setup.real_url }}</a></li>
-    <li>That service is <code>{{ host_setup.real_service }}</code> in <code>{{ host_setup.real_region }}</code>.</li>
-    <li>In Cloud Run, delete <code>{{ host_setup.service }}</code> so this does not happen again.</li>
+    <li>Service <code>{{ host_setup.real_service }}</code> in <code>{{ host_setup.real_region }}</code>.</li>
+    <li>In Cloud Run, delete <code>{{ host_setup.service }}</code>.</li>
   </ol>
   {% else %}
   <b>Gmail is not attached to this Cloud Run service.</b>
-  <ol class="setup-steps">
+  <ol>
     <li>Open Cloud Run → <code>{{ host_setup.real_service }}</code> in <code>{{ host_setup.real_region }}</code> (not <code>inbox-job-agent-git</code>).</li>
     <li>Edit &amp; deploy new revision → Variables &amp; secrets.</li>
-    <li>Reference secret <code>gmail-token</code> as environment variable <code>GMAIL_TOKEN_JSON</code> (version latest).</li>
-    <li>Deploy, then click Check now again.</li>
+    <li>Reference secret <code>gmail-token</code> as env <code>GMAIL_TOKEN_JSON</code> (version latest), then deploy.</li>
   </ol>
   {% endif %}
 </div>

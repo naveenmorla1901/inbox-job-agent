@@ -1,65 +1,72 @@
 {% extends "base.html" %}
-{% block title %}Outreach — Inbox Job Agent{% endblock %}
+{% block title %}Follow-ups — Inbox Job Agent{% endblock %}
 {% block content %}
-<form class="filters" method="get" action="/outreach">
-  <select name="who">
-    <option value="all" {% if who == 'all' %}selected{% endif %}>anyone</option>
-    <option value="people" {% if who == 'people' %}selected{% endif %}>people only</option>
-  </select>
-  <select name="show">
-    <option value="open" {% if show == 'open' %}selected{% endif %}>open only</option>
-    <option value="all" {% if show == 'all' %}selected{% endif %}>everything</option>
-  </select>
-  <select name="days">
-    {% for option in [7, 30, 60, 180] %}
-    <option value="{{ option }}" {% if days == option %}selected{% endif %}>{{ option }}d</option>
-    {% endfor %}
-  </select>
-  <button type="submit">Filter</button>
+<div class="page-head">
+  <div>
+    <h1>Follow-ups</h1>
+    <div class="sub">Mail a real person sent you — recruiters, interviews, assessments, offers.</div>
+  </div>
+</div>
+
+<form class="toolbar" method="get" action="/outreach">
+  <div class="field">
+    <label>Sender</label>
+    <select name="who" onchange="this.form.submit()">
+      <option value="all" {% if who == 'all' %}selected{% endif %}>Anyone</option>
+      <option value="people" {% if who == 'people' %}selected{% endif %}>People only</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Status</label>
+    <select name="show" onchange="this.form.submit()">
+      <option value="open" {% if show == 'open' %}selected{% endif %}>Open only</option>
+      <option value="all" {% if show == 'all' %}selected{% endif %}>Everything</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Window</label>
+    <select name="days" onchange="this.form.submit()">
+      {% for option in [7, 30, 60, 180] %}
+      <option value="{{ option }}" {% if days == option %}selected{% endif %}>{{ option }}d</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="actions"><button type="submit" class="btn-primary">Filter</button></div>
 </form>
 
 {% if not items %}
-  <p class="empty">
-    Nothing waiting on you. Only mail that wants something back lands here: recruiter
-    pitches, interview scheduling, assessments, recorded-video rounds and other next steps,
-    and offers. Plain "we received your application" mail goes to
-    <a href="/applications">Applications</a> instead.
-  </p>
+<div class="empty">
+  <div class="big">Nothing waiting on you</div>
+  Recruiter pitches, interview scheduling, assessments, and offers land here. Plain “we received your application” goes to <a href="/applications">Applications</a>.
+</div>
 {% endif %}
 
 {% for item in items %}
-<div class="card u-{{ item.urgency }}">
+<div class="card hover" style="{% if item.urgency == 'high' %}border-left:3px solid var(--bad){% endif %}">
   <div class="row">
-    <div>
+    <div style="min-width:0">
       <h3>{{ item.subject or "(no subject)" }}</h3>
-      <div class="meta">
-        <span class="chip">{{ item.kind.replace("_", " ") }}</span>
-        <span>{{ item.person or item.person_email }}</span>
-        {% if item.company %}<span>· {{ item.company }}</span>{% endif %}
-        {% if item.role %}<span>· {{ item.role }}</span>{% endif %}
-        {% if item.location %}<span>· {{ item.location }}</span>{% endif %}
-        {% if item.employment_type %}<span>· {{ item.employment_type }}</span>{% endif %}
-        {% if item.person_phone %}<span>· {{ item.person_phone }}</span>{% endif %}
-        <span>· {{ item.received_at | et("%b %d, %I:%M %p ET") }}</span>
+      <div class="meta" style="margin-top:5px">
+        <span class="tag {% if item.kind in ('interview_invite','offer','next_step','assessment') %}good{% else %}accent{% endif %}">{{ item.kind.replace("_", " ")|title }}</span>
+        <b>{{ item.person or item.person_email }}</b>
+        {% if item.company %}<span class="sep">·</span>{{ item.company }}{% endif %}
+        {% if item.role %}<span class="sep">·</span>{{ item.role }}{% endif %}
+        {% if item.person_phone %}<span class="sep">·</span>{{ item.person_phone }}{% endif %}
+        <span class="sep">·</span><span>{{ item.received_at | et("%b %d, %I:%M %p ET") }}</span>
       </div>
-      {% if item.summary %}<p style="margin:8px 0 0">{{ item.summary }}</p>{% endif %}
-      {% if item.action_required %}
-      <p style="margin:6px 0 0; color: var(--warn)"><b>Action:</b> {{ item.action_required }}</p>
-      {% endif %}
-      {% if item.scheduling_url %}
-      <p style="margin:6px 0 0"><a href="{{ item.scheduling_url }}" target="_blank" rel="noopener">scheduling link</a></p>
-      {% endif %}
+      {% if item.summary %}<p class="lede">{{ item.summary }}</p>{% endif %}
+      {% if item.action_required %}<p class="lede" style="color:var(--warn)"><b>Action:</b> {{ item.action_required }}</p>{% endif %}
     </div>
-    <div style="text-align:right">
-      <a href="{{ item.gmail_link }}" target="_blank" rel="noopener">open mail</a>
-    </div>
+    {% if item.notified %}<span class="tag">notified</span>{% endif %}
   </div>
   <div class="actions">
+    <a class="tag" href="{{ item.gmail_link }}" target="_blank" rel="noopener">Open mail →</a>
+    {% if item.scheduling_url %}<a class="tag accent" href="{{ item.scheduling_url }}" target="_blank" rel="noopener">Scheduling link</a>{% endif %}
+    <span class="divider"></span>
     <form method="post" action="/outreach/{{ item.id }}/handled">
       <input type="hidden" name="redirect" value="/outreach?show={{ show }}&days={{ days }}&who={{ who }}">
-      <button type="submit">{{ "reopen" if item.handled else "mark handled" }}</button>
+      <button type="submit" class="btn-sm {% if item.handled %}btn-ghost{% else %}btn-primary{% endif %}">{{ "Reopen" if item.handled else "Mark handled" }}</button>
     </form>
-    {% if item.notified %}<span class="chip">notified</span>{% endif %}
   </div>
 </div>
 {% endfor %}

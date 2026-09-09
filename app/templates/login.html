@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Login — Inbox Job Agent{% endblock %}
+{% block title %}Sign in — Inbox Job Agent{% endblock %}
 {% block content %}
-<div class="card" style="max-width:380px;margin:60px auto">
-  <h3>Open dashboard</h3>
-  <p class="meta">Enter the dashboard password you saved when you deployed.</p>
-  <form method="post" action="/login" style="display:flex;gap:8px;margin-top:12px">
-    <input type="password" name="key" placeholder="password" autofocus style="flex:1">
-    <button type="submit" class="primary">Open</button>
+<div class="card" style="max-width:400px;margin:64px auto; box-shadow:var(--shadow-md)">
+  <h3 style="font-size:18px">Sign in</h3>
+  <p class="sub" style="color:var(--muted); margin-top:4px">Enter the dashboard password you set when you deployed.</p>
+  <form method="post" action="/login" style="display:flex;gap:8px;margin-top:16px">
+    <input type="password" name="key" placeholder="Password" autofocus style="flex:1">
+    <button type="submit" class="btn-primary">Open</button>
   </form>
 </div>
 {% endblock %}
