@@ -152,11 +152,20 @@ def _title_like(text: str) -> bool:
 
 
 def _rules_look_incomplete(rules: list[JobCandidate], anchors: list[Anchor]) -> bool:
-    """Spend an LLM call only when the rules plausibly missed postings."""
+    """Spend an LLM call only when the rules plausibly missed postings.
+
+    "Missed" means a link that is genuinely posting-shaped (``is_job_url``) with a
+    title-like label was not turned into a candidate. Nav/CTA links on a job-board
+    domain ("Manage job alerts", "View more") are not counted, so well-handled
+    digests spend no tokens."""
     if not rules:
         return True
     claimed = {c.url_key for c in rules}
-    unclaimed = [a for a in anchors if a.jobish and a.key not in claimed and _title_like(a.text)]
+    unclaimed = [
+        a
+        for a in anchors
+        if a.key not in claimed and _title_like(a.text) and is_job_url(a.url)
+    ]
     return len(unclaimed) >= 2
 
 
