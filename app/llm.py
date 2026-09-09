@@ -48,7 +48,7 @@ PROVIDERS: dict[str, Provider] = {
         "gemini",
         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         "gemini_api_key",
-        "gemini-2.0-flash",
+        "gemini-flash-latest",
         style="gemini",
     ),
     # Same Gemini endpoint, second Google account. Cooldown and the post-call gap
@@ -57,14 +57,14 @@ PROVIDERS: dict[str, Provider] = {
         "gemini2",
         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         "gemini_api_key_2",
-        "gemini-2.0-flash",
+        "gemini-flash-latest",
         style="gemini",
     ),
     "groq": Provider(
         "groq",
         "https://api.groq.com/openai/v1/chat/completions",
         "groq_api_key",
-        "llama-3.3-70b-versatile",
+        "openai/gpt-oss-20b",
     ),
     "deepseek": Provider(
         "deepseek",

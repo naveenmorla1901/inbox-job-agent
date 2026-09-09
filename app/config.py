@@ -45,9 +45,9 @@ class Settings(BaseSettings):
     llm_provider: str = "none"  # legacy single-provider setting, still honoured
     gemini_api_key: str = ""
     gemini_api_key_2: str = ""  # second Google AI Studio account; rotated with gemini_api_key
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-flash-latest"
     groq_api_key: str = ""
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-20b"
     deepseek_api_key: str = ""
     nvidia_api_key: str = ""
     openrouter_api_key: str = ""
