@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     groq_model: str = "openai/gpt-oss-20b"
     deepseek_api_key: str = ""
     nvidia_api_key: str = ""
-    nvidia_model: str = "meta/llama-3.1-70b-instruct"
+    nvidia_model: str = "nvidia/nemotron-3-ultra-550b-a55b"
     openrouter_api_key: str = ""
     openrouter_model: str = "openai/gpt-oss-20b:free"
     ollama_host: str = "http://localhost:11434"

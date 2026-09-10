@@ -76,7 +76,7 @@ PROVIDERS: dict[str, Provider] = {
         "nvidia",
         "https://integrate.api.nvidia.com/v1/chat/completions",
         "nvidia_api_key",
-        "meta/llama-3.1-70b-instruct",
+        "nvidia/nemotron-3-ultra-550b-a55b",
         json_mode=False,  # NIM rejects response_format on several hosted models
     ),
     "openrouter": Provider(
