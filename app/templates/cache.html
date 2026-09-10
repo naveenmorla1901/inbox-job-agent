@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Clear cache — Inbox Job Agent{% endblock %}
+{% block content %}
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+<div class="page-head">
+  <div>
+    <h1>Clear cache</h1>
+    <div class="sub">Remove stored emails, extracted postings, scrapes, follow-ups, extract logs, and issues. Gmail itself is not touched. Application tracker rows stay.</div>
+  </div>
+</div>
+
+<form class="toolbar" method="get" action="/cache">
+  <div class="field">
+    <label>What to clear</label>
+    <select name="scope">
+      <option value="range" {% if scope != 'old' %}selected{% endif %}>Start day to end time</option>
+      <option value="old" {% if scope == 'old' %}selected{% endif %}>All remaining old data</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Start day and time (ET)</label>
+    <input type="datetime-local" name="start_at" value="{{ start_at }}" {% if scope == 'old' %}readonly{% endif %}>
+  </div>
+  <div class="field">
+    <label>Through (day, hour, or now)</label>
+    <input type="datetime-local" name="end_at" value="{{ end_at }}">
+  </div>
+  <div class="field">
+    <label>Or hours from start</label>
+    <input type="number" name="hours" min="0" max="8760" step="1" value="{{ hours }}" placeholder="e.g. 6">
+  </div>
+  <div class="actions"><button type="submit" class="btn-primary">Preview</button></div>
+</form>
+
+<div class="card danger">
+  <h3>{{ label }}</h3>
+  <p class="lede">
+    {% if scope == 'old' %}
+    Starts at the oldest cached row{% if oldest %} ({{ oldest | et("%b %d, %I:%M %p ET") }}){% endif %}
+    and goes through the time on the right. Use this to wipe leftover history in one shot.
+    {% else %}
+    Uses the start day/time through the end day/time. If you type hours (1, 6, 24…), that length
+    from start overrides the end clock.
+    {% endif %}
+    Next poll still skips mail from before origin, so cleared emails will not come back unless you
+    reset origin on Status. This cannot be undone.
+  </p>
+  <div class="tags mt">
+    <span class="tag">{{ counts.messages }} emails</span>
+    <span class="tag">{{ counts.jobs }} postings</span>
+    <span class="tag">{{ counts.outreach }} follow-ups</span>
+    <span class="tag">{{ counts.issues }} issues</span>
+    <span class="tag">{{ counts.runs }} extract runs</span>
+    <span class="tag">{{ counts.events }} application events</span>
+  </div>
+  <form id="clear-cache" method="post" action="/cache/clear" class="actions" onsubmit="return confirm('Clear cached emails, matches, scrapes, and issues for {{ label }}? Gmail itself is not touched. This cannot be undone.');">
+    <input type="hidden" name="scope" value="{{ scope }}">
+    <input type="hidden" name="start_at" value="{{ start_at }}">
+    <input type="hidden" name="end_at" value="{{ end_at }}">
+    <input type="hidden" name="hours" value="{{ hours or 0 }}">
+    <button type="submit" class="btn-danger" {% if not total %}disabled{% endif %}>Clear cache</button>
+  </form>
+</div>
+{% endblock %}

@@ -238,6 +238,7 @@
       <a href="/applications" class="{% if request.url.path.startswith('/application') %}active{% endif %}">Applications</a>
       <a href="/overview" class="{% if request.url.path == '/overview' %}active{% endif %}">Overview</a>
       <a href="/charts" class="{% if request.url.path.startswith('/charts') %}active{% endif %}">Charts</a>
+      <a href="/cache" class="{% if request.url.path.startswith('/cache') %}active{% endif %}">Clear cache</a>
       <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}">Status</a>
       <a href="/issues" class="{% if request.url.path.startswith('/issues') %}active{% endif %}">
         Issues{% if nav_errors %}<span class="count-badge">{{ nav_errors }}</span>{% endif %}

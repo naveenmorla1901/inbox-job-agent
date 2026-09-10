@@ -29,6 +29,12 @@ def parse_et_datetime(raw: str) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def et_datetime_value(value: datetime | None) -> str:
+    """Value for `<input type=datetime-local>` in US Eastern."""
+    local = as_et(value)
+    return local.strftime("%Y-%m-%dT%H:%M") if local else ""
+
+
 def fmt_et(value: datetime | None, fmt: str = "%b %d, %I:%M %p ET") -> str:
     local = as_et(value)
     return local.strftime(fmt) if local else ""

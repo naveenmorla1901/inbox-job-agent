@@ -8,7 +8,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, func, select
 
 from .applications import dupe_key, record_email
 from .classify import (
@@ -32,7 +32,7 @@ from .models import Application, ApplicationEvent, Issue, Job, Message, Outreach
 from .notify import Notifier
 from .schedule import next_tick_epoch, tick_window
 from .scrape import SHELL_TITLE, ScrapedJob, fetch_all, fetch_job, llm_extract
-from .timefmt import fmt_et
+from .timefmt import EASTERN, as_et, fmt_et, parse_et_datetime
 
 log = logging.getLogger(__name__)
 
@@ -243,6 +243,73 @@ def _uniq(rows) -> list:
         seen.add(key)
         out.append(row)
     return out
+
+
+def oldest_stored_at(session: Session) -> datetime | None:
+    """Earliest timestamp among cached mail, jobs, scrapes, issues, and extract runs."""
+    stamps: list[datetime] = []
+    for value in (
+        session.exec(select(func.min(Message.received_at))).one(),
+        session.exec(select(func.min(Job.received_at))).one(),
+        session.exec(select(func.min(Outreach.received_at))).one(),
+        session.exec(select(func.min(Issue.occurred_at))).one(),
+        session.exec(select(func.min(PollRun.started_at))).one(),
+        session.exec(select(func.min(ApplicationEvent.occurred_at))).one(),
+    ):
+        if not value:
+            continue
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        stamps.append(value)
+    return min(stamps) if stamps else None
+
+
+def resolve_cache_window(
+    session: Session,
+    *,
+    scope: str = "range",
+    start_at: str = "",
+    end_at: str = "",
+    hours: int = 0,
+) -> tuple[datetime, datetime, str]:
+    """Build a clear-cache window in UTC from Eastern date/time fields.
+
+    `scope=old` starts at the oldest stored row (all remaining old data).
+    `hours` from start overrides the end time when > 0.
+    A typed end time is inclusive through that minute.
+    """
+    now = datetime.now(timezone.utc)
+    scope = (scope or "range").strip().lower()
+    hours = max(0, int(hours or 0))
+    typed_end = parse_et_datetime(end_at)
+
+    if scope == "old":
+        start = oldest_stored_at(session) or now
+        if hours:
+            end = start + timedelta(hours=hours)
+        elif typed_end:
+            end = typed_end + timedelta(minutes=1)
+        else:
+            end = now
+        if end <= start:
+            end = start + timedelta(minutes=1)
+        return start, end, f"all remaining old through {fmt_et(end)}"
+
+    start = parse_et_datetime(start_at)
+    if start is None:
+        local = as_et(now) or now.astimezone(EASTERN)
+        start = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    if hours:
+        end = start + timedelta(hours=hours)
+    elif typed_end:
+        end = typed_end + timedelta(minutes=1)
+    else:
+        end = now
+    if end <= start:
+        start, end = end, start
+        if end <= start:
+            end = start + timedelta(minutes=1)
+    return start, end, f"{fmt_et(start)} → {fmt_et(end)}"
 
 
 def count_purge_window(session: Session, start: datetime, end: datetime) -> dict[str, int]:

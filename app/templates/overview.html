@@ -148,29 +148,4 @@
   <p class="lede">No applications in this window{% if app_q %} match “{{ app_q }}”{% endif %}.</p>
   {% endif %}
 </div>
-
-<div class="card danger">
-  <h3>Delete stored data in this window</h3>
-  <p class="lede">
-    Uses the From / To range above (click <b>Apply range</b> first). Removes stored emails, extracted
-    postings, scrapes, follow-ups, extract logs, and issues for
-    <b>{{ report.window_label }}</b>. Application tracker rows stay. Gmail itself is not touched,
-    and this cannot be undone. Next poll still skips mail from before origin, so deleted emails
-    will not come back unless you reset origin on Status.
-  </p>
-  <div class="tags mt">
-    <span class="tag">{{ purge_counts.messages }} emails</span>
-    <span class="tag">{{ purge_counts.jobs }} postings</span>
-    <span class="tag">{{ purge_counts.outreach }} follow-ups</span>
-    <span class="tag">{{ purge_counts.issues }} issues</span>
-    <span class="tag">{{ purge_counts.runs }} extract runs</span>
-    <span class="tag">{{ purge_counts.events }} application events</span>
-  </div>
-  <form method="post" action="/overview/purge" class="actions" onsubmit="return confirm('Delete stored emails, matches, scrapes, and issues for {{ report.window_label }}? Gmail itself is not touched. This cannot be undone.');">
-    <input type="hidden" name="days" value="{{ days }}">
-    <input type="hidden" name="since" value="{{ since }}">
-    <input type="hidden" name="until" value="{{ until }}">
-    <button type="submit" class="btn-danger" {% if not purge_total %}disabled{% endif %}>Delete this window</button>
-  </form>
-</div>
 {% endblock %}

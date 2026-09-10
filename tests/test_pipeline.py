@@ -232,6 +232,30 @@ def test_refresh_demotes_a_receipt_off_follow_ups(session):
     assert session.exec(select(Outreach)).one().kind == "application_update"
 
 
+def test_resolve_cache_window_hours_and_all_old(session):
+    from datetime import datetime, timezone
+
+    from app.timefmt import parse_et_datetime
+
+    older = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    session.add(Message(id="ancient", subject="leftover", received_at=older))
+    session.commit()
+
+    start, end, label = pipeline.resolve_cache_window(
+        session, start_at="2026-09-10T14:00", hours=1
+    )
+    mid = parse_et_datetime("2026-09-10T14:30")
+    later = parse_et_datetime("2026-09-10T16:00")
+    assert start <= mid < end
+    assert not (start <= later < end)
+
+    old_start, old_end, old_label = pipeline.resolve_cache_window(
+        session, scope="old", end_at="2026-09-10T15:00"
+    )
+    assert "all remaining old" in old_label
+    assert old_start <= older < old_end
+
+
 def test_purge_window_drops_only_that_range(session):
     from datetime import datetime, timezone
 

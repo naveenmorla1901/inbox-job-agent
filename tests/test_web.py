@@ -111,11 +111,11 @@ def test_issues_page_lists_recorded_failures(client):
     assert b"LLM_PROVIDER=none" in body
 
 
-def test_overview_purge_deletes_only_the_selected_window(client):
+def test_cache_tab_clears_hour_window_not_overview(client):
     from datetime import datetime, timezone
 
     test_client, engine = client
-    inside = datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc)
+    inside = datetime(2026, 9, 10, 18, 30, tzinfo=timezone.utc)  # 2:30pm ET
     outside = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
     with Session(engine) as session:
         session.add(Message(id="keep", subject="old", received_at=outside))
@@ -127,17 +127,29 @@ def test_overview_purge_deletes_only_the_selected_window(client):
         session.add(Issue(source="llm", title="new fail", occurred_at=inside))
         session.commit()
 
-    page = test_client.get("/overview?since=2026-09-10&until=2026-09-10")
+    overview = test_client.get("/overview?since=2026-09-10&until=2026-09-10")
+    assert overview.status_code == 200
+    assert b"Delete this window" not in overview.content
+    assert b"Clear cache" in overview.content
+
+    page = test_client.get("/cache?scope=range&start_at=2026-09-10T14:00&end_at=2026-09-10T15:00")
     assert page.status_code == 200
-    assert b"Delete this window" in page.content
+    assert b"Clear cache" in page.content
     assert b"1 emails" in page.content
+    assert b"All remaining old data" in page.content
 
     response = test_client.post(
-        "/overview/purge",
-        data={"days": 1, "since": "2026-09-10", "until": "2026-09-10"},
+        "/cache/clear",
+        data={
+            "scope": "range",
+            "start_at": "2026-09-10T14:00",
+            "end_at": "2026-09-10T15:00",
+            "hours": "",
+        },
         follow_redirects=False,
     )
     assert response.status_code == 303
+    assert response.headers["location"].startswith("/cache?")
     assert "flash=" in response.headers["location"]
 
     with Session(engine) as session:
@@ -147,6 +159,21 @@ def test_overview_purge_deletes_only_the_selected_window(client):
         assert session.exec(select(Job).where(Job.url_key == "drop-1")).first() is None
         assert session.exec(select(Issue).where(Issue.title == "old fail")).first() is not None
         assert session.exec(select(Issue).where(Issue.title == "new fail")).first() is None
+
+
+def test_cache_all_remaining_old_preview(client):
+    from datetime import datetime, timezone
+
+    test_client, engine = client
+    old = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    with Session(engine) as session:
+        session.add(Message(id="ancient", subject="leftover", received_at=old))
+        session.commit()
+
+    page = test_client.get("/cache?scope=old&end_at=2026-09-10T12:00")
+    assert page.status_code == 200
+    assert b"all remaining old" in page.content.lower()
+    assert b"1 emails" in page.content
 
 
 def test_matches_page_groups_by_day_and_shows_source_mail(client):
@@ -247,6 +274,9 @@ def test_charts_and_overview_funnel_pages(client):
     flags = test_client.get("/flags")
     assert flags.status_code == 200
     assert b"Wrong-category flags" in flags.content
+    cache = test_client.get("/cache")
+    assert cache.status_code == 200
+    assert b"Start day and time" in cache.content
 
 
 def test_reextract_this_email_rewrites_jobs(client):

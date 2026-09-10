@@ -30,9 +30,11 @@ from .pipeline import (
     load_poll_progress,
     load_poll_runs,
     maybe_renew_watch,
+    oldest_stored_at,
     parse_extract_payload,
     poll_since_cursor,
     purge_window,
+    resolve_cache_window,
     reextract_email,
     rescrape_job,
     run_once,
@@ -41,7 +43,7 @@ from .pipeline import (
 from .probe import probe_apis
 from .reporting import CATEGORY_LABELS, CATEGORY_ORDER, application_funnel, build_breakdown, window_bounds
 from .schedule import next_tick_epoch
-from .timefmt import et_day_label, fmt_et, group_by_et_day
+from .timefmt import et_datetime_value, et_day_label, fmt_et, group_by_et_day
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 # httpx logs full request URLs at INFO, which would print API keys carried in query strings.
@@ -455,7 +457,6 @@ def overview_page(
 ):
     report = build_breakdown(session, days=days, since=since or None, until=until or None)
     start, end, _, _ = window_bounds(days=days, since=since or None, until=until or None)
-    purge_counts = count_purge_window(session, start, end)
     funnel = application_funnel(session, start, end, q=app_q)
     return templates.TemplateResponse(
         request,
@@ -467,11 +468,88 @@ def overview_page(
             "until": until,
             "app_q": app_q,
             "funnel": funnel,
-            "purge_counts": purge_counts,
-            "purge_total": sum(purge_counts.values()),
             "flash": flash,
             "pending_outreach": pending_outreach_count(session),
         },
+    )
+
+
+def _cache_hours(raw: str | int | None) -> int:
+    try:
+        return max(0, int(raw or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _cache_query(
+    scope: str,
+    start_at: str,
+    end_at: str,
+    hours: int,
+    **extra: str,
+) -> str:
+    q = {"scope": scope, "start_at": start_at, "end_at": end_at}
+    if hours:
+        q["hours"] = str(hours)
+    q.update({key: value for key, value in extra.items() if value})
+    return urlencode(q)
+
+
+@app.get("/cache", response_class=HTMLResponse)
+def cache_page(
+    request: Request,
+    session: Session = Depends(db_session),
+    scope: str = "range",
+    start_at: str = "",
+    end_at: str = "",
+    hours: str = "",
+    flash: str = "",
+):
+    hour_count = _cache_hours(hours)
+    start, end, label = resolve_cache_window(
+        session, scope=scope, start_at=start_at, end_at=end_at, hours=hour_count
+    )
+    counts = count_purge_window(session, start, end)
+    oldest = oldest_stored_at(session)
+    return templates.TemplateResponse(
+        request,
+        "cache.html",
+        {
+            "scope": "old" if scope == "old" else "range",
+            "start_at": start_at or et_datetime_value(start),
+            "end_at": end_at or et_datetime_value(end),
+            "hours": hour_count or "",
+            "label": label,
+            "start": start,
+            "end": end,
+            "oldest": oldest,
+            "counts": counts,
+            "total": sum(counts.values()),
+            "flash": flash,
+        },
+    )
+
+
+@app.post("/cache/clear")
+def cache_clear(
+    request: Request,
+    session: Session = Depends(db_session),
+    scope: str = Form("range"),
+    start_at: str = Form(""),
+    end_at: str = Form(""),
+    hours: str = Form(""),
+):
+    require_token(request)
+    hour_count = _cache_hours(hours)
+    start, end, label = resolve_cache_window(
+        session, scope=scope, start_at=start_at, end_at=end_at, hours=hour_count
+    )
+    counts = purge_window(session, start, end)
+    bits = [f"{n} {name}" for name, n in counts.items() if n]
+    flash = f"Cleared {', '.join(bits) or 'nothing'} for {label}. Gmail itself was not touched."
+    return RedirectResponse(
+        f"/cache?{_cache_query(scope, start_at, end_at, hour_count, flash=flash)}",
+        status_code=303,
     )
 
 
@@ -483,17 +561,16 @@ def overview_purge(
     since: str = Form(""),
     until: str = Form(""),
 ):
+    """Old Overview delete URL — same clear, then send you to Clear cache."""
     require_token(request)
     start, end, label, _ = window_bounds(days=days, since=since or None, until=until or None)
     counts = purge_window(session, start, end)
     bits = [f"{n} {name}" for name, n in counts.items() if n]
-    q = {"days": str(days)}
-    if since:
-        q["since"] = since
-    if until:
-        q["until"] = until
-    q["flash"] = f"Deleted {', '.join(bits) or 'nothing'} for {label}. Gmail itself was not touched."
-    return RedirectResponse(f"/overview?{urlencode(q)}", status_code=303)
+    flash = f"Cleared {', '.join(bits) or 'nothing'} for {label}. Gmail itself was not touched."
+    return RedirectResponse(
+        f"/cache?{urlencode({'scope': 'range', 'flash': flash})}",
+        status_code=303,
+    )
 
 
 def _activity_context(session: Session, **extra) -> dict:
