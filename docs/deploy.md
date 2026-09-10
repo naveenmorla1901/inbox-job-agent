@@ -4,13 +4,13 @@ You already run this app on your laptop against **the same Gmail inbox**. Hostin
 
 1. Google builds the **existing Dockerfile** (you do not install Docker Desktop).
 2. The container stays at a public URL (the dashboard).
-3. Every 30 minutes Cloud Scheduler calls `POST /api/run`, which reads that same Gmail.
+3. Every **15 minutes** Cloud Scheduler calls `POST /api/run`, which reads that same Gmail.
 4. After a one-time **Connect GitHub** in Cloud Run, each push to `main` builds that Docker image and deploys it. Secrets stay in GCP — GitHub does not need a Google key.
 
 | Piece | Where | What it does |
 | --- | --- | --- |
 | Dashboard + poller | **Cloud Run** (one container) | Website + `POST /api/run` |
-| Schedule | **Cloud Scheduler** | Hits `/api/run` every 30 minutes |
+| Schedule | **Cloud Scheduler** | Hits `/api/run` every 15 minutes |
 | Database | **Neon Postgres** (free) | Jobs survive when the container sleeps |
 | Gmail | Your existing `secrets/token.json` | Same mailbox as localhost |
 | Profile | Your existing `config/profile.yaml` | Same titles / skills |
@@ -249,16 +249,17 @@ The first Mail page can be empty until a check runs. That is Neon, not your lapt
 
 ---
 
-## Step 10 — Check Gmail every 30 minutes
+## Step 10 — Check Gmail every 15 minutes
 
-This is the whole schedule. No Pub/Sub. Cloud Scheduler calls `POST /api/run`.
+This is the whole cloud schedule. No Pub/Sub. Cloud Scheduler calls `POST /api/run`.
+A new Cloud Run revision (each push to `main`) plants the cursor at deploy time, so old mail is not backfilled.
 
 Replace `YOUR_API_TOKEN` with the dashboard password:
 
 ```powershell
 gcloud scheduler jobs create http inbox-job-agent-poll `
   --location us-east1 `
-  --schedule "*/30 * * * *" `
+  --schedule "*/15 * * * *" `
   --time-zone "America/New_York" `
   --uri "https://inbox-job-agent-244210842384.us-east1.run.app/api/run" `
   --http-method POST `
@@ -271,11 +272,11 @@ If the job already exists:
 ```powershell
 gcloud scheduler jobs update http inbox-job-agent-poll `
   --location us-east1 `
-  --schedule "*/30 * * * *" `
+  --schedule "*/15 * * * *" `
   --update-headers "x-api-token=YOUR_API_TOKEN"
 ```
 
-After GitHub is connected in Cloud Run (next section), each push to `main` rebuilds the Docker image. The 30-minute poller is separate and already lives in GCP.
+After GitHub is connected in Cloud Run (next section), each push to `main` rebuilds the Docker image and starts a new revision. Update the scheduler once; it is not recreated by the image build.
 
 ---
 

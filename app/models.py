@@ -140,3 +140,34 @@ class State(SQLModel, table=True):
     key: str = Field(primary_key=True)
     value: str = ""
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class Issue(SQLModel, table=True):
+    """Gmail / LLM / scrape / poll failure the dashboard can show with a timestamp."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    occurred_at: datetime = Field(default_factory=utcnow, index=True)
+    source: str = Field(default="poll", index=True)  # gmail | llm | scrape | poll | config
+    severity: str = Field(default="error", index=True)  # error | warn | info
+    title: str = ""
+    detail: str = Field(default="", sa_column=Column(Text))
+    message_id: str = Field(default="", index=True)
+
+
+class PollRun(SQLModel, table=True):
+    """One 15-minute extract window (or a boot marker)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    started_at: datetime = Field(default_factory=utcnow, index=True)
+    finished_at: datetime | None = None
+    trigger: str = ""  # boot | loop | api
+    status: str = Field(default="ok", index=True)  # ok | error
+    window_start: int = 0
+    window_end: int = 0
+    fetched: int = 0
+    processed: int = 0
+    skipped: int = 0
+    jobs_found: int = 0
+    jobs_matched: int = 0
+    error_count: int = 0
+    note: str = Field(default="", sa_column=Column(Text))

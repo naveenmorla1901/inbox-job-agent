@@ -58,6 +58,7 @@ def test_missing_token_names_the_github_copy(monkeypatch, fresh_config):
 def test_host_setup_warns_only_on_cloud_without_token(monkeypatch, fresh_config):
     monkeypatch.delenv("GMAIL_TOKEN_JSON", raising=False)
     monkeypatch.delenv("K_SERVICE", raising=False)
+    monkeypatch.setenv("GMAIL_TOKEN_FILE", "secrets/does-not-exist.json")
     local = host_setup(config.get_settings())
     assert local["on_cloud"] is False
     assert local["warning"] == ""

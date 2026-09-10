@@ -250,7 +250,7 @@ Repo → **Settings → Secrets and variables → Actions**:
 
 Variables tab: `LLM_PROVIDER=gemini`, optionally `MIN_JOB_SCORE`, `GMAIL_QUERY`.
 
-**Verify:** GitHub Actions should not poll Gmail. The Cloud Run scheduler does that every 30 minutes.
+**Verify:** GitHub Actions should not poll Gmail. Cloud Scheduler hits Cloud Run every **15 minutes**.
 
 ---
 

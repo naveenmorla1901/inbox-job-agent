@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,19 +18,23 @@ from .classify import FOLLOW_UP_KINDS, NOREPLY_RE
 from .config import ROOT, get_profile, get_settings
 from .db import get_engine, init_db
 from .gmail_client import host_setup, parse_gmail_push
+from .issues import issue_counts, recent_issues
 from .models import Application, ApplicationEvent, Job, Message, Outreach
 from .pipeline import (
     clear_inbox,
+    ensure_poll_origin,
     load_last_run,
+    load_poll_origin,
     load_poll_progress,
+    load_poll_runs,
     maybe_renew_watch,
     parse_extract_payload,
+    poll_since_cursor,
     run_once,
     start_gmail_watch,
-    watch_expiration_ms,
 )
 from .reporting import CATEGORY_LABELS, CATEGORY_ORDER, build_breakdown
-from .schedule import next_slot_end
+from .schedule import next_tick_epoch
 from .timefmt import fmt_et, group_by_et_day
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -49,10 +52,10 @@ def _gmail_configured() -> bool:
 
 
 def start_auto_poller() -> bool:
-    """Background thread: clock-aligned 15-minute Gmail windows, one email at a time.
+    """Background thread: 15-minute windows counted from this process start.
 
-    Start at 6:03 waits until 6:15, then reads only 6:00–6:15. Older unprocessed
-    mail is skipped. Pytest and missing Gmail config leave this off.
+    Cloud Run sleeps between requests, so production uses Cloud Scheduler → POST /api/run
+    instead of this thread. Pytest and missing Gmail config leave this off.
     """
     global _poller_started
     settings = get_settings()
@@ -60,22 +63,31 @@ def start_auto_poller() -> bool:
         return False
     if os.environ.get("PYTEST_CURRENT_TEST") or not _gmail_configured():
         return False
+    if os.environ.get("K_SERVICE"):
+        log.info("Cloud Run: in-process poller off; Cloud Scheduler hits /api/run")
+        return False
     _poller_started = True
 
     def loop() -> None:
-        from .pipeline import aligned_poll_loop
+        from .pipeline import interval_poll_loop
 
-        aligned_poll_loop()
+        interval_poll_loop()
 
     threading.Thread(target=loop, name="job-auto-poller", daemon=True).start()
     interval = max(60, settings.poll_interval_seconds)
-    log.info("auto-sync started: clock-aligned every %d min", interval // 60)
+    log.info("auto-sync started: every %d min from boot", interval // 60)
     return True
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    try:
+        with Session(get_engine()) as session:
+            ensure_poll_origin(session)
+            session.commit()
+    except Exception:
+        log.exception("could not plant poll origin")
     start_auto_poller()
     yield
 
@@ -90,26 +102,37 @@ def _template_nav(_request: Request) -> dict:
     last_run: dict = {}
     progress: dict = {}
     pending = 0
+    origin = 0
+    open_errors = 0
     interval = max(60, settings.poll_interval_seconds)
-    next_end = next_slot_end(interval_s=interval)
-    next_at = datetime.fromtimestamp(next_end, tz=timezone.utc)
+    now = datetime.now(timezone.utc)
     try:
         with Session(get_engine()) as session:
             last_run = load_last_run(session)
             progress = load_poll_progress(session)
             pending = pending_outreach_count(session)
+            origin = load_poll_origin(session)
+            open_errors = issue_counts(session, hours=24).get("error", 0)
     except Exception:
         pass
+    if origin:
+        next_end = next_tick_epoch(origin, interval, now)
+    else:
+        next_end = int(now.timestamp()) + interval
+    next_at = datetime.fromtimestamp(next_end, tz=timezone.utc)
     extracting = progress.get("status") == "running"
     return {
         "nav_pending": pending,
+        "nav_errors": open_errors,
         "nav_sync": {
             "auto": settings.auto_poll,
             "interval_min": max(1, interval // 60),
             "last_run": last_run,
             "next_at": next_at,
+            "origin": origin,
             "progress": progress,
             "extracting": extracting,
+            "cloud": bool(os.environ.get("K_SERVICE")),
         },
     }
 
@@ -430,17 +453,25 @@ def overview_page(
 
 def _activity_context(session: Session, **extra) -> dict:
     settings = get_settings()
-    exp_ms = watch_expiration_ms(session)
-    expires_at = (
-        datetime.fromtimestamp(exp_ms / 1000, tz=timezone.utc) if exp_ms else None
-    )
-    watching = bool(exp_ms and exp_ms > time.time() * 1000)
+    origin = load_poll_origin(session)
+    interval = max(60, settings.poll_interval_seconds)
+    counts = issue_counts(session, hours=24)
+    llm = None
+    try:
+        from .llm import LLM
+
+        llm = LLM(settings)
+    except Exception:
+        pass
     return {
         "pending_outreach": pending_outreach_count(session),
         "last_run": extra.pop("last_run", None) or load_last_run(session),
-        "topic_ready": bool(settings.gmail_pubsub_topic.strip()),
-        "watching": watching,
-        "watch_until": fmt_et(expires_at, "%b %d, %I:%M %p ET") if expires_at else "",
+        "poll_runs": extra.pop("poll_runs", None) or load_poll_runs(session, 40),
+        "origin": origin,
+        "interval": interval,
+        "issue_counts": counts,
+        "llm_enabled": bool(llm and llm.enabled),
+        "llm_chain": llm.describe("extract") if llm else "none",
         "flash": extra.pop("flash", ""),
         "error": extra.pop("error", ""),
         **extra,
@@ -453,7 +484,6 @@ def activity_page(
     session: Session = Depends(db_session),
     fresh: str = "",
     checked: str = "",
-    on: str = "",
 ):
     flash = ""
     if fresh:
@@ -465,10 +495,33 @@ def activity_page(
             f"Analyzed {last.get('processed', 0)} new. "
             f"Skipped {last.get('skipped', 0)} already seen."
         )
-    elif on:
-        flash = "New-mail trigger is on. The next inbox message will be analyzed automatically."
     return templates.TemplateResponse(
         request, "activity.html", _activity_context(session, flash=flash)
+    )
+
+
+@app.get("/issues", response_class=HTMLResponse)
+def issues_page(
+    request: Request,
+    session: Session = Depends(db_session),
+    source: str = "",
+    hours: int = 168,
+):
+    hours = max(1, min(int(hours or 168), 720))
+    rows = recent_issues(session, hours=hours, source=source)
+    counts = issue_counts(session, hours=24)
+    week = issue_counts(session, hours=hours)
+    return templates.TemplateResponse(
+        request,
+        "issues.html",
+        {
+            "issues": rows,
+            "source": source,
+            "hours": hours,
+            "counts": counts,
+            "week": week,
+            "sources": ["gmail", "llm", "scrape", "poll", "config"],
+        },
     )
 
 
@@ -730,7 +783,14 @@ def api_stats(session: Session = Depends(db_session)) -> dict:
 @app.post("/api/run")
 def api_run(request: Request, max_messages: int | None = None) -> dict:
     require_token(request)
-    return run_once(max_messages).as_dict()
+    try:
+        return poll_since_cursor(max_messages, trigger="api").as_dict()
+    except Exception as exc:
+        logging.getLogger(__name__).exception("scheduled poll failed")
+        from .issues import record_issue
+
+        record_issue("poll", "Scheduled poll failed", str(exc))
+        raise
 
 
 @app.post("/api/gmail-push")

@@ -1,7 +1,7 @@
-"""Clock-aligned poll windows (default 15 minutes).
+"""15-minute poll windows measured from process/revision start, not the wall clock.
 
-Server start at 6:03 waits until 6:15, then reads only 6:00–6:15. Mail before
-the current slot is left alone — no backfill of old unprocessed mail.
+Boot at 6:03 → skip mail before 6:03 → first extract at 6:18 covering 6:03–6:18.
+Same revision waking from Cloud Run sleep keeps that origin so idle time is not dropped.
 """
 
 from __future__ import annotations
@@ -13,30 +13,29 @@ def slot_seconds(interval_s: int) -> int:
     return max(60, int(interval_s))
 
 
-def slot_floor(when: datetime | None = None, interval_s: int = 900) -> int:
-    """Unix time of the :00/:15/:30/:45 (or whatever slot) at or before `when`."""
+def next_tick_epoch(origin_epoch: int, interval_s: int, when: datetime | None = None) -> int:
+    """Unix time of the next interval boundary after `when`, counted from `origin_epoch`."""
     slot = slot_seconds(interval_s)
-    ts = int((when or datetime.now(timezone.utc)).timestamp())
-    return (ts // slot) * slot
+    origin = int(origin_epoch)
+    ts = (when or datetime.now(timezone.utc)).timestamp()
+    if ts <= origin:
+        return origin + slot
+    n = int((ts - origin) // slot) + 1
+    return origin + n * slot
 
 
-def next_slot_end(when: datetime | None = None, interval_s: int = 900) -> int:
-    """Next clock boundary after `when`. On a boundary, wait a full slot.
-
-    Start 5:00 → first run 5:15 covering 5:00–5:15.
-    Start 6:03 → first run 6:15 covering 6:00–6:15.
-    """
-    slot = slot_seconds(interval_s)
-    return slot_floor(when, slot) + slot
-
-
-def seconds_until_next_slot(when: datetime | None = None, interval_s: int = 900) -> float:
-    end = next_slot_end(when, interval_s)
+def seconds_until_next_tick(
+    origin_epoch: int, interval_s: int, when: datetime | None = None
+) -> float:
+    end = next_tick_epoch(origin_epoch, interval_s, when)
     ts = (when or datetime.now(timezone.utc)).timestamp()
     return max(0.0, end - ts)
 
 
-def slot_window(end_epoch: int, interval_s: int = 900) -> tuple[int, int]:
+def tick_window(end_epoch: int, origin_epoch: int, interval_s: int) -> tuple[int, int]:
     """Closed-open [start, end) unix range ending at `end_epoch`."""
     slot = slot_seconds(interval_s)
-    return int(end_epoch) - slot, int(end_epoch)
+    origin = int(origin_epoch)
+    end = int(end_epoch)
+    start = max(origin, end - slot)
+    return start, end

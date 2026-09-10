@@ -52,9 +52,9 @@ def test_status_page_shows_auto_sync_and_no_manual_buttons(client):
     response = test_client.get("/activity")
     assert response.status_code == 200
     body = response.content
-    assert b"Auto-sync" in body or b"Clock-aligned" in body
-    assert b"15 minutes" in body
-    assert b":00" in body or b"15-minute" in body
+    assert b"Auto-sync" in body or b"Poll interval" in body
+    assert b"15 minutes" in body or b"min" in body
+    assert b"Origin" in body
     # The manual controls were removed in favour of automatic syncing.
     assert b"Check now" not in body
     assert b"Start fresh" not in body
@@ -91,6 +91,18 @@ def test_mail_page_bundles_jobs_under_the_email(client):
     assert raw.status_code == 200
     assert b"Email text" in raw.content
     assert b"Extracted postings" in raw.content
+
+
+def test_issues_page_lists_recorded_failures(client):
+    from app.issues import record_issue
+
+    test_client, _engine = client
+    record_issue("gmail", "Gmail list failed", "429 quota", severity="error")
+    response = test_client.get("/issues")
+    assert response.status_code == 200
+    assert b"Gmail list failed" in response.content
+    assert b"429 quota" in response.content
+    assert b"gmail" in response.content
 
 
 def test_matches_page_groups_by_day_and_shows_source_mail(client):

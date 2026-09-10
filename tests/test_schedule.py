@@ -1,39 +1,34 @@
 from datetime import datetime, timezone
 
-from app.schedule import next_slot_end, seconds_until_next_slot, slot_floor, slot_window
+from app.schedule import next_tick_epoch, seconds_until_next_tick, tick_window
 
 
 def _utc(h, m, s=0) -> datetime:
     return datetime(2026, 9, 10, h, m, s, tzinfo=timezone.utc)
 
 
-def test_start_at_hour_waits_full_slot():
-    now = _utc(17, 0, 0)
-    end = next_slot_end(now, 900)
-    assert end == int(_utc(17, 15).timestamp())
-    assert slot_window(end, 900) == (int(_utc(17, 0).timestamp()), end)
-
-
-def test_start_at_603_runs_at_615_covering_600_to_615():
-    now = _utc(18, 3, 0)
-    end = next_slot_end(now, 900)
-    start, stop = slot_window(end, 900)
-    assert end == int(_utc(18, 15).timestamp())
-    assert start == int(_utc(18, 0).timestamp())
+def test_boot_at_603_first_run_is_618():
+    origin = _utc(18, 3, 0)
+    now = origin
+    end = next_tick_epoch(int(origin.timestamp()), 900, now)
+    start, stop = tick_window(end, int(origin.timestamp()), 900)
+    assert end == int(_utc(18, 18).timestamp())
+    assert start == int(origin.timestamp())
     assert stop == end
-    assert 11 * 60 < seconds_until_next_slot(now, 900) <= 12 * 60
+    assert seconds_until_next_tick(int(origin.timestamp()), 900, now) == 900
 
 
-def test_start_at_548_runs_at_600_covering_545_to_600():
-    now = _utc(17, 48, 0)
-    end = next_slot_end(now, 900)
-    start, stop = slot_window(end, 900)
-    assert end == int(_utc(18, 0).timestamp())
-    assert start == int(_utc(17, 45).timestamp())
-    assert stop == end
+def test_mid_window_points_at_next_boundary():
+    origin = _utc(18, 3, 0)
+    now = _utc(18, 10, 0)
+    end = next_tick_epoch(int(origin.timestamp()), 900, now)
+    assert end == int(_utc(18, 18).timestamp())
+    assert 7 * 60 <= seconds_until_next_tick(int(origin.timestamp()), 900, now) <= 8 * 60
 
 
-def test_slot_floor_snaps_to_quarter():
-    assert slot_floor(_utc(18, 3), 900) == int(_utc(18, 0).timestamp())
-    assert slot_floor(_utc(18, 15), 900) == int(_utc(18, 15).timestamp())
-    assert slot_floor(_utc(18, 29, 59), 900) == int(_utc(18, 15).timestamp())
+def test_after_first_tick_covers_second_window():
+    origin = _utc(17, 48, 0)
+    end = next_tick_epoch(int(origin.timestamp()), 900, _utc(18, 4, 0))
+    start, stop = tick_window(end, int(origin.timestamp()), 900)
+    assert start == int(_utc(18, 3).timestamp())
+    assert stop == int(_utc(18, 18).timestamp())

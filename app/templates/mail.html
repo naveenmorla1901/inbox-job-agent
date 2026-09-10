@@ -57,7 +57,7 @@
 {% if not messages %}
 <div class="empty">
   <div class="big">No mail in this window</div>
-  Auto-sync waits for the next :00 / :15 / :30 / :45, then reads only that 15-minute slice — older unprocessed mail is skipped.
+  Auto-sync starts at boot, skips older mail, and extracts every 15 minutes from that moment.
 </div>
 {% else %}
 <div class="workspace">
@@ -107,7 +107,7 @@
     <div class="pane-scroll">
       <div class="pane-body">
         {% if view == 'raw' %}
-        <p class="lede" style="margin-top:0">Left is every posting pulled from this email. Right is the stored email text. If a job is in the mail but missing on the left, that is an extraction miss — use it as feedback.</p>
+        <p class="lede" style="margin-top:0">Left is every posting pulled from this email. Right is the stored email text. If a job is in the mail but missing on the left, that is an extraction miss — use it as feedback. Compare timestamps on Analysis if the window looks wrong.</p>
         <div class="extract-grid" style="margin-top:12px">
           <div class="extract-col">
             <h3>Extracted postings ({{ raw_extract|length }})</h3>
@@ -150,6 +150,11 @@
               <div class="k">Reason</div><div>{{ selected.reason or "—" }}</div>
               <div class="k">Type</div><div>{{ selected.email_type or "—" }}</div>
               <div class="k">Postings</div><div>{{ selected.jobs_matched }}/{{ selected.jobs_found }} matched</div>
+              <div class="k">Received</div><div class="mono">{{ selected.received_at | et("%b %d, %I:%M:%S %p ET") }}</div>
+              <div class="k">Processed</div><div class="mono">{{ selected.processed_at | et("%b %d, %I:%M:%S %p ET") }}</div>
+              <div class="k">Gmail id</div><div class="mono">{{ selected.id }}</div>
+              <div class="k">Body chars</div><div>{{ (selected.body_text or "")|length }}</div>
+              <div class="k">Raw rows</div><div>{{ raw_extract|length }} stored{% if selected.extract_json %} · {{ selected.extract_json|length }} bytes{% endif %}</div>
             </div>
           </div>
           <div class="card" style="margin:0">

@@ -100,8 +100,11 @@ Prints the score breakdown, matched skills, and missing skills so you can calibr
 
 ## Hosting
 
-This app runs on **Google Cloud Run**. Google Cloud Build builds the Docker image on each push
-to `main`. Secrets stay in GCP. First-time steps: [`docs/deploy.md`](docs/deploy.md).
+This app runs on **Google Cloud Run**. Push to `main` → Cloud Build → new Cloud Run revision.
+Do not deploy from the laptop and from GitHub at the same time. Secrets stay in GCP.
+Gmail on Cloud Run is polled every **15 minutes** by Cloud Scheduler (`POST /api/run`).
+A new revision starts the cursor at deploy time (old mail is skipped).
+First-time steps: [`docs/deploy.md`](docs/deploy.md).
 
 Test the same image locally:
 

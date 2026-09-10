@@ -1,4 +1,5 @@
 # Same image as `docker build` locally. Cloud Run keeps existing env vars and secrets.
+# Poll cadence is Cloud Scheduler (*/15), not this file.
 substitutions:
   _SERVICE: inbox-job-agent
   _REGION: us-east1

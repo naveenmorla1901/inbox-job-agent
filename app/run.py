@@ -9,7 +9,7 @@ import time
 
 from .config import get_profile, get_settings
 from .db import init_db, session_scope, set_state
-from .pipeline import STATE_CURSOR, aligned_poll_loop, run_once
+from .pipeline import STATE_CURSOR, interval_poll_loop, run_once
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 # httpx logs full request URLs at INFO, which would print API keys carried in query strings.
@@ -84,7 +84,7 @@ def cmd_report(args: argparse.Namespace) -> None:
 
 
 def cmd_loop(args: argparse.Namespace) -> None:
-    aligned_poll_loop(max_messages=args.max, interval_s=args.interval)
+    interval_poll_loop(max_messages=args.max, interval_s=args.interval)
 
 
 def cmd_backfill(args: argparse.Namespace) -> None:
@@ -235,7 +235,7 @@ def main() -> None:
 
     loop = sub.add_parser(
         "loop",
-        help="poll forever on the clock (:00/:15/:30/:45); skips mail from before this slot",
+        help="poll forever every N seconds from process start; skips mail from before boot",
     )
     loop.add_argument("--interval", type=int, default=900)
     loop.add_argument("--max", type=int, default=None)

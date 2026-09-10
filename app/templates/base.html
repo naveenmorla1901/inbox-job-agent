@@ -174,6 +174,8 @@
     tbody td { padding: 11px 12px; border-bottom: 1px solid var(--line-2); vertical-align: top; }
     tbody tr:last-child td { border-bottom: none; }
     tbody tr:hover { background: var(--surface-2); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
     /* ---------- KPIs ---------- */
     .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -224,9 +226,12 @@
       <a href="/applications" class="{% if request.url.path.startswith('/application') %}active{% endif %}">Applications</a>
       <a href="/overview" class="{% if request.url.path == '/overview' %}active{% endif %}">Overview</a>
       <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}">Status</a>
+      <a href="/issues" class="{% if request.url.path.startswith('/issues') %}active{% endif %}">
+        Issues{% if nav_errors %}<span class="count-badge">{{ nav_errors }}</span>{% endif %}
+      </a>
     </nav>
     {% if request.url.path != '/login' %}
-    <span class="sync" title="Clock-aligned Gmail windows on :00 / :15 / :30 / :45">
+    <span class="sync" title="15-minute windows from boot/deploy. Mail before origin is skipped.">
       <span class="dot {% if nav_sync.extracting %}{% elif not nav_sync.auto %}off{% endif %}"{% if nav_sync.extracting %} style="background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)"{% endif %}></span>
       {% if nav_sync.extracting %}
         Extracting {{ nav_sync.progress.index }}/{{ nav_sync.progress.total }}

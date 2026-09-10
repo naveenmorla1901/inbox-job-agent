@@ -7,14 +7,21 @@
 <div class="page-head">
   <div>
     <h1>Status</h1>
-    <div class="sub">Clock-aligned 15-minute Gmail windows. Each run reads only that slice, one email at a time. Older unprocessed mail is skipped.</div>
+    <div class="sub">15-minute extract from the moment this revision started. Mail before that is skipped. Cloud Run is woken by Cloud Scheduler; this laptop uses an in-process loop.</div>
+  </div>
+  <div class="actions" style="margin:0">
+    <a class="btn-sm" href="/issues">Open issues{% if issue_counts.error %} ({{ issue_counts.error }} errors / 24h){% endif %}</a>
   </div>
 </div>
 
 <div class="kpis">
   <div class="kpi good">
     <div class="n">{{ nav_sync.interval_min }}<span style="font-size:15px; font-weight:600"> min</span></div>
-    <div class="l">Slot size</div>
+    <div class="l">Poll interval</div>
+  </div>
+  <div class="kpi">
+    <div class="n" style="font-size:18px">{% if origin %}{{ origin | epoch_et("%I:%M %p ET") }}{% else %}—{% endif %}</div>
+    <div class="l">Origin (skip before)</div>
   </div>
   <div class="kpi">
     <div class="n" style="font-size:18px">{{ nav_sync.next_at | et("%I:%M %p ET") }}</div>
@@ -25,29 +32,70 @@
     <div class="l">Last synced</div>
   </div>
   <div class="kpi accent"><div class="n">{{ last_run.processed|default(0) }}</div><div class="l">Analyzed last run</div></div>
-  <div class="kpi good"><div class="n">{{ last_run.jobs_matched|default(0) }}</div><div class="l">Matches last run</div></div>
+  <div class="kpi {% if issue_counts.error %}{% endif %}"><div class="n" style="{% if issue_counts.error %}color:var(--bad){% endif %}">{{ issue_counts.error|default(0) }}</div><div class="l">Errors last 24h</div></div>
 </div>
 
 <div class="card">
-  <h3>How the window works</h3>
-  <p class="lede">The poller sits on the clock — <b>:00, :15, :30, :45</b>. Start the server at 6:03 and the first extract runs at 6:15, covering mail from 6:00 to 6:15. Start at 5:48 and the first run is 6:00, covering 5:45–6:00. Mail from before that slot is not backfilled.</p>
+  <h3>Integrations</h3>
   <div class="tags mt">
-    <span class="tag good">Clock-aligned every {{ nav_sync.interval_min }} minutes</span>
+    <span class="tag {% if host_setup.gmail_ok %}good{% else %}bad{% endif %}">Gmail {% if host_setup.gmail_ok %}ok{% else %}missing token{% endif %}</span>
+    <span class="tag {% if host_setup.postgres %}good{% else %}{% endif %}">{% if host_setup.postgres %}Postgres{% else %}SQLite{% endif %}</span>
+    <span class="tag {% if llm_enabled %}good{% else %}warn{% endif %}">LLM {% if llm_enabled %}{{ llm_chain }}{% else %}off{% endif %}</span>
+    <span class="tag {% if nav_sync.cloud %}accent{% endif %}">{% if nav_sync.cloud %}Cloud Run + Scheduler{% else %}Local in-process loop{% endif %}</span>
     {% if last_run.window_start and last_run.window_end %}
     <span class="tag">last window {{ last_run.window_start | epoch_et("%I:%M %p") }}–{{ last_run.window_end | epoch_et("%I:%M %p ET") }}</span>
     {% endif %}
-    {% if last_run.started_at %}<span class="tag">last check {{ last_run.started_at[:16] }} UTC</span>{% else %}<span class="tag">no check yet</span>{% endif %}
     {% if nav_sync.extracting %}<span class="tag warn">extracting {{ nav_sync.progress.index }}/{{ nav_sync.progress.total }}</span>{% endif %}
-    {% if host_setup.on_cloud %}
-    <span class="tag {% if host_setup.gmail_ok %}good{% else %}bad{% endif %}">Gmail token {% if host_setup.gmail_ok %}attached{% else %}missing{% endif %}</span>
-    <span class="tag {% if host_setup.postgres %}good{% else %}warn{% endif %}">{% if host_setup.postgres %}Postgres (persistent){% else %}SQLite (resets on sleep){% endif %}</span>
-    {% endif %}
   </div>
+  <p class="lede">Push to <code>main</code> rebuilds Cloud Run. That new revision plants the cursor at deploy time, then every 15 minutes only new mail is read. Update Cloud Scheduler to <code>*/15 * * * *</code> if it is still on 30 minutes.</p>
+</div>
+
+<div class="card">
+  <h3>Extract history</h3>
+  {% if not poll_runs %}
+  <p class="lede">No windows recorded yet. First extract is 15 minutes after origin.</p>
+  {% else %}
+  <table class="compact" style="margin-top:8px">
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>Trigger</th>
+        <th>Window</th>
+        <th>Fetched</th>
+        <th>New</th>
+        <th>Skipped</th>
+        <th>Jobs</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for run in poll_runs %}
+    <tr>
+      <td class="mono">{{ run.started_at | et("%b %d %I:%M %p") }}</td>
+      <td>{{ run.trigger }}</td>
+      <td class="mono">
+        {% if run.window_start and run.window_end %}
+          {{ run.window_start | epoch_et("%I:%M") }}–{{ run.window_end | epoch_et("%I:%M %p") }}
+        {% else %}—{% endif %}
+      </td>
+      <td>{{ run.fetched }}</td>
+      <td>{{ run.processed }}</td>
+      <td>{{ run.skipped }}</td>
+      <td>{{ run.jobs_matched }}/{{ run.jobs_found }}</td>
+      <td>
+        <span class="tag {% if run.status == 'error' %}bad{% elif run.trigger == 'boot' %}{% else %}good{% endif %}">{{ run.status }}</span>
+        {% if run.note %}<div class="meta">{{ run.note[:180] }}</div>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 </div>
 
 {% if last_run.emails %}
 <div class="card">
-  <h3>Most recent sync</h3>
+  <h3>Most recent window — emails</h3>
   <table class="compact" style="margin-top:8px">
     <thead><tr><th>From</th><th>Subject</th><th style="width:130px">Type</th><th style="width:90px">Jobs</th></tr></thead>
     <tbody>
@@ -57,7 +105,7 @@
       <td>
         {% if item.id %}<a href="/?m={{ item.id }}&days=7">{{ item.subject or "(no subject)" }}</a>
         {% else %}{{ item.subject or "(no subject)" }}{% endif %}
-        {% if item.error %}<div class="meta">{{ item.error }}</div>{% endif %}
+        {% if item.error %}<div class="meta" style="color:var(--bad)">{{ item.error }}</div>{% endif %}
       </td>
       <td>{% if item.error %}<span class="tag bad">failed</span>{% else %}<span class="tag">{{ (item.category or "other")|replace("_", " ")|title }}</span>{% endif %}</td>
       <td>{% if item.jobs_found %}{{ item.jobs_matched }}/{{ item.jobs_found }}{% else %}—{% endif %}</td>
@@ -65,13 +113,6 @@
     {% endfor %}
     </tbody>
   </table>
-</div>
-{% endif %}
-
-{% if last_run.errors %}
-<div class="card">
-  <h3>Errors</h3>
-  {% for err in last_run.errors %}<div class="meta">{{ err }}</div>{% endfor %}
 </div>
 {% endif %}
 {% endblock %}

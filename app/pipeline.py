@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from .applications import dupe_key, record_email
 from .classify import (
@@ -26,15 +27,18 @@ from .gmail_client import GmailClient
 from .job_fields import enrich_fields, normalize_visa, phone_from_text, scheduling_url_from_links
 from .llm import LLM
 from .matcher import match_job, title_worth_scraping
-from .models import Application, ApplicationEvent, Job, Message, Outreach
+from .issues import record_issue
+from .models import Application, ApplicationEvent, Job, Message, Outreach, PollRun
 from .notify import Notifier
-from .schedule import next_slot_end, slot_floor, slot_window
+from .schedule import next_tick_epoch, tick_window
 from .scrape import SHELL_TITLE, ScrapedJob, fetch_all, llm_extract
 from .timefmt import fmt_et
 
 log = logging.getLogger(__name__)
 
 STATE_CURSOR = "last_poll_epoch"
+STATE_ORIGIN = "poll_origin_epoch"
+STATE_BOOT = "poll_boot_id"
 STATE_WATCH = "gmail_watch_expiration"
 STATE_LAST_RUN = "last_run_json"
 STATE_POLL = "poll_progress"
@@ -62,6 +66,7 @@ class RunStats:
     duration_s: float = 0.0
     window_start: int = 0
     window_end: int = 0
+    trigger: str = ""
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -97,25 +102,64 @@ def build_query(
     return " ".join(p for p in parts if p)
 
 
+def boot_id() -> str:
+    """Cloud Run revision, or this local process. Cold starts of the same revision reuse it."""
+    revision = (os.environ.get("K_REVISION") or "").strip()
+    if revision:
+        return f"cloud:{revision}"
+    return f"local:{os.getpid()}"
+
+
+def _int_state(session: Session, key: str, default: int = 0) -> int:
+    raw = get_state(session, key)
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        return default
+
+
+def ensure_poll_origin(
+    session: Session,
+    when: datetime | None = None,
+    identity: str | None = None,
+) -> dict:
+    """On a new local process or Cloud Run revision, skip mail from before now.
+
+    Same Cloud Run revision waking from sleep keeps the cursor, so idle time is not dropped.
+    """
+    identity = identity or boot_id()
+    now_ts = int((when or datetime.now(timezone.utc)).timestamp())
+    previous = get_state(session, STATE_BOOT)
+    if previous == identity:
+        origin = _int_state(session, STATE_ORIGIN, now_ts)
+        cursor = _int_state(session, STATE_CURSOR, origin)
+        return {"reset": False, "origin": origin, "cursor": cursor, "boot": identity}
+    set_state(session, STATE_BOOT, identity)
+    set_state(session, STATE_ORIGIN, str(now_ts))
+    set_state(session, STATE_CURSOR, str(now_ts))
+    session.add(
+        PollRun(
+            trigger="boot",
+            status="ok",
+            window_start=now_ts,
+            window_end=now_ts,
+            note=f"origin={identity}; mail before this skipped",
+        )
+    )
+    log.info("poll origin set to now (%s); mail before this is skipped", identity)
+    return {"reset": True, "origin": now_ts, "cursor": now_ts, "boot": identity}
+
+
 def plant_poll_cursor(
     session: Session, when: datetime | None = None, interval_s: int | None = None
 ) -> int:
-    """Drop a stale cursor so auto-sync never backfills mail from before this slot.
+    """Back-compat wrapper: plant the cursor at `when` (not a clock slot)."""
+    del interval_s
+    return int(ensure_poll_origin(session, when=when)["cursor"])
 
-    Start at 6:03 plants 6:00. The 6:15 run then covers 6:00–6:15 only.
-    A cursor already inside the current slot is left alone.
-    """
-    interval = max(60, interval_s or get_settings().poll_interval_seconds)
-    floor = slot_floor(when, interval)
-    raw = get_state(session, STATE_CURSOR)
-    try:
-        current = int(raw) if raw else 0
-    except ValueError:
-        current = 0
-    if current < floor:
-        set_state(session, STATE_CURSOR, str(floor))
-        return floor
-    return current
+
+def load_poll_origin(session: Session) -> int:
+    return _int_state(session, STATE_ORIGIN, 0)
 
 
 def set_poll_progress(session: Session, **fields) -> None:
@@ -242,8 +286,33 @@ def remember_run(session: Session, stats: RunStats) -> None:
         "emails": stats.emails[:80],
         "window_start": stats.window_start,
         "window_end": stats.window_end,
+        "trigger": stats.trigger,
     }
     set_state(session, STATE_LAST_RUN, json.dumps(payload))
+    started = datetime.now(timezone.utc)
+    try:
+        started = datetime.fromisoformat(stats.started_at)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        pass
+    session.add(
+        PollRun(
+            started_at=started,
+            finished_at=datetime.now(timezone.utc),
+            trigger=stats.trigger or "poll",
+            status="error" if stats.errors else "ok",
+            window_start=stats.window_start,
+            window_end=stats.window_end,
+            fetched=stats.fetched,
+            processed=stats.processed,
+            skipped=stats.skipped,
+            jobs_found=stats.jobs_found,
+            jobs_matched=stats.jobs_matched,
+            error_count=len(stats.errors),
+            note="\n".join(stats.errors[:8]),
+        )
+    )
 
 
 def load_last_run(session: Session) -> dict:
@@ -255,6 +324,10 @@ def load_last_run(session: Session) -> dict:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def load_poll_runs(session: Session, limit: int = 40) -> list[PollRun]:
+    return list(session.exec(select(PollRun).order_by(col(PollRun.started_at).desc()).limit(limit)).all())
 
 
 def _pointer_job(email: ParsedEmail, candidate: JobCandidate, original: Job) -> Job:
@@ -645,19 +718,30 @@ def run_once(
     reextract: bool = False,
     after_epoch: int | None = None,
     before_epoch: int | None = None,
+    trigger: str = "poll",
 ) -> RunStats:
     started = time.time()
     stats = RunStats(
         started_at=datetime.now(timezone.utc).isoformat(),
         window_start=int(after_epoch or 0),
         window_end=int(before_epoch or 0),
+        trigger=trigger,
     )
     settings = get_settings()
     init_db()
 
     llm = LLM(settings)
     notifier = Notifier(settings)
-    gmail = GmailClient(settings)
+    try:
+        gmail = GmailClient(settings)
+    except Exception as exc:
+        record_issue("gmail", "Gmail client failed to start", str(exc))
+        stats.errors.append(str(exc))
+        stats.duration_s = round(time.time() - started, 2)
+        with session_scope() as session:
+            remember_run(session, stats)
+            session.commit()
+        return stats
     new_jobs: list[Job] = []
     pending_notifications: list[Outreach] = []
     latest_epoch = 0
@@ -671,7 +755,25 @@ def run_once(
             before_epoch=before_epoch,
         )
         limit = max_messages or settings.gmail_max_results
-        message_ids = gmail.list_message_ids(search, limit)
+        try:
+            message_ids = gmail.list_message_ids(search, limit)
+        except Exception as exc:
+            log.exception("gmail list failed")
+            record_issue("gmail", "Gmail list failed", str(exc))
+            stats.errors.append(str(exc))
+            set_poll_progress(
+                session,
+                status="error",
+                index=0,
+                total=0,
+                subject="",
+                window_start=after_epoch or 0,
+                window_end=before_epoch or 0,
+            )
+            stats.duration_s = round(time.time() - started, 2)
+            remember_run(session, stats)
+            session.commit()
+            return stats
         stats.fetched = len(message_ids)
         log.info("query=%r -> %d message(s)", search, len(message_ids))
         set_poll_progress(
@@ -744,6 +846,7 @@ def run_once(
                 session.rollback()
                 log.exception("failed on message %s", message_id)
                 stats.errors.append(f"{message_id}: {exc}")
+                record_issue("gmail", f"Failed on message {message_id}", str(exc), message_id=message_id)
                 stats.emails.append(
                     {"id": message_id, "subject": "", "sender": "", "category": "", "jobs_found": 0, "jobs_matched": 0, "error": str(exc)}
                 )
@@ -776,43 +879,82 @@ def run_once(
 
     try:
         maybe_renew_watch()
-    except Exception:
+    except Exception as exc:
         log.exception("gmail watch renew failed")
+        record_issue("gmail", "Gmail watch renew failed", str(exc), severity="warn")
     log.info("run complete: %s", {k: v for k, v in stats.as_dict().items() if k != "emails"})
     return stats
 
 
-def aligned_poll_loop(max_messages: int | None = None, interval_s: int | None = None) -> None:
-    """Wait for the next clock slot, then extract that 15-minute window, forever.
+def poll_since_cursor(max_messages: int | None = None, trigger: str = "api") -> RunStats:
+    """Extract mail from the stored cursor up to now. Used by Cloud Scheduler."""
+    init_db()
+    with session_scope() as session:
+        info = ensure_poll_origin(session)
+        session.commit()
+        cursor = int(info["cursor"])
+    end = int(time.time())
+    if end <= cursor:
+        stats = RunStats(
+            started_at=datetime.now(timezone.utc).isoformat(),
+            window_start=cursor,
+            window_end=end,
+            trigger=trigger,
+        )
+        with session_scope() as session:
+            remember_run(session, stats)
+            session.commit()
+        return stats
+    return run_once(
+        max_messages=max_messages,
+        after_epoch=cursor,
+        before_epoch=end,
+        trigger=trigger,
+    )
 
-    Boot at 6:03 → sleep until 6:15 → Gmail `after:6:00 before:6:15`, one email
-    at a time. A slow run that overruns the next mark catches up immediately.
+
+def interval_poll_loop(max_messages: int | None = None, interval_s: int | None = None) -> None:
+    """Wait 15 minutes from boot, extract that window, repeat.
+
+    Boot at 6:03 → skip older mail → first run at 6:18 covering 6:03–6:18.
     """
     interval = max(60, interval_s or get_settings().poll_interval_seconds)
     init_db()
     with session_scope() as session:
-        plant_poll_cursor(session, interval_s=interval)
+        info = ensure_poll_origin(session)
         session.commit()
-    next_end = next_slot_end(interval_s=interval)
-    first_start = next_end - interval
+        origin = int(info["origin"])
+    tick = 1
     log.info(
-        "auto-sync aligned: first window %s–%s (mail before that skipped)",
-        fmt_et(datetime.fromtimestamp(first_start, tz=timezone.utc), "%I:%M %p ET"),
-        fmt_et(datetime.fromtimestamp(next_end, tz=timezone.utc), "%I:%M %p ET"),
+        "auto-sync from %s; first window ends %s (older mail skipped)",
+        fmt_et(datetime.fromtimestamp(origin, tz=timezone.utc), "%I:%M %p ET"),
+        fmt_et(datetime.fromtimestamp(origin + interval, tz=timezone.utc), "%I:%M %p ET"),
     )
     while True:
-        delay = next_end - time.time()
+        end = origin + tick * interval
+        delay = end - time.time()
         if delay > 0:
             log.info(
                 "auto-sync sleeping %.0fs until %s",
                 delay,
-                fmt_et(datetime.fromtimestamp(next_end, tz=timezone.utc), "%I:%M %p ET"),
+                fmt_et(datetime.fromtimestamp(end, tz=timezone.utc), "%I:%M %p ET"),
             )
             time.sleep(delay)
-        start, end = slot_window(next_end, interval)
+        start, stop = tick_window(end, origin, interval)
         try:
-            stats = run_once(max_messages=max_messages, after_epoch=start, before_epoch=end)
+            stats = run_once(
+                max_messages=max_messages,
+                after_epoch=start,
+                before_epoch=stop,
+                trigger="loop",
+            )
             log.info("auto-sync: %s", {k: v for k, v in stats.as_dict().items() if k != "emails"})
-        except Exception:
-            log.exception("auto-sync failed; will retry next slot")
-        next_end += interval
+        except Exception as exc:
+            log.exception("auto-sync failed; will retry next window")
+            record_issue("poll", "Auto-sync window failed", str(exc))
+        tick += 1
+
+
+def aligned_poll_loop(max_messages: int | None = None, interval_s: int | None = None) -> None:
+    """Old name — interval is now counted from boot, not :00/:15/:30/:45."""
+    interval_poll_loop(max_messages=max_messages, interval_s=interval_s)

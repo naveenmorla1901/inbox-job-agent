@@ -263,6 +263,12 @@ class LLM:
     def _park(self, provider: Provider, seconds: int, why: str) -> None:
         _cooldowns[provider.name] = time.time() + seconds
         log.warning("%s %s - skipping it for %ds", provider.name, why, seconds)
+        try:
+            from .issues import record_issue
+
+            record_issue("llm", f"LLM {provider.name} {why}", f"skipping {seconds}s", severity="warn")
+        except Exception:
+            pass
 
     def _rest_gemini(self, provider: Provider) -> None:
         """After a successful Gemini call, sit that key out so the other account is used next."""

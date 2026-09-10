@@ -251,27 +251,30 @@ def test_build_query_closed_window_does_not_look_back(session):
     assert "after:1000" not in query
 
 
-def test_plant_cursor_jumps_to_slot_floor_and_skips_old_mail(session):
+def test_ensure_origin_resets_stale_cursor_on_new_boot(session, monkeypatch):
     from datetime import datetime, timezone
 
-    from app.schedule import slot_floor
-
+    monkeypatch.setenv("K_REVISION", "")
     when = datetime(2026, 9, 10, 18, 3, tzinfo=timezone.utc)
     db.set_state(session, pipeline.STATE_CURSOR, "100")
-    planted = pipeline.plant_poll_cursor(session, when=when, interval_s=900)
-    assert planted == slot_floor(when, 900)
-    assert int(db.get_state(session, pipeline.STATE_CURSOR)) == planted
+    db.set_state(session, pipeline.STATE_BOOT, "old")
+    info = pipeline.ensure_poll_origin(session, when=when, identity="local-test")
+    assert info["reset"] is True
+    assert info["cursor"] == int(when.timestamp())
+    assert int(db.get_state(session, pipeline.STATE_CURSOR)) == int(when.timestamp())
 
 
-def test_plant_cursor_keeps_cursor_inside_current_slot(session):
+def test_ensure_origin_keeps_cursor_on_same_revision(session):
     from datetime import datetime, timezone
 
-    from app.schedule import slot_floor
-
     when = datetime(2026, 9, 10, 18, 3, tzinfo=timezone.utc)
-    inside = slot_floor(when, 900) + 60
-    db.set_state(session, pipeline.STATE_CURSOR, str(inside))
-    assert pipeline.plant_poll_cursor(session, when=when, interval_s=900) == inside
+    origin = int(when.timestamp())
+    db.set_state(session, pipeline.STATE_BOOT, "cloud:rev1")
+    db.set_state(session, pipeline.STATE_ORIGIN, str(origin))
+    db.set_state(session, pipeline.STATE_CURSOR, str(origin + 60))
+    info = pipeline.ensure_poll_origin(session, when=when, identity="cloud:rev1")
+    assert info["reset"] is False
+    assert info["cursor"] == origin + 60
 
 
 def test_process_email_stores_raw_extract_payload(session):
