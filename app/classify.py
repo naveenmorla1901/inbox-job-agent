@@ -10,8 +10,10 @@ from .job_fields import (
     email_type_of,
     employment_from_text,
     experience_from_text,
+    LOGIN_CODE_RE,
     phone_from_text,
     scheduling_url_from_links,
+    SECURITY_RE,
     state_of,
 )
 from .llm import CLASSIFY, LLM
@@ -134,7 +136,7 @@ Allowed categories:
 - offer: job offer
 - rejection: application declined
 - application_update: application received or under review, nothing to do
-- other: anything else (newsletters, bills, social, marketing)
+- other: anything else — newsletters, bills, social, marketing, login codes, OTP, security alerts
 
 Return JSON:
 {{"category": "...", "confidence": 0.0-1.0, "company": "", "role": "",
@@ -216,6 +218,8 @@ def classify_rules(email: ParsedEmail, profile: Profile, job_count: int = 0) -> 
         return Classification(ASSESSMENT, 0.85, "assessment language")
     if NEXT_STEP_RE.search(blob):
         return Classification(NEXT_STEP, 0.8, "asks you to complete a step")
+    if LOGIN_CODE_RE.search(blob) or SECURITY_RE.search(blob):
+        return Classification(OTHER, 0.95, "login/security code", email_type="security")
     # LinkedIn / Monster confirmations embed "similar jobs". Those links are extracted
     # later; the mail itself is still an acknowledgement.
     if SUBMITTED_RE.search(blob) or APPLIED_RE.search(blob):
@@ -261,7 +265,12 @@ def classify_email(
 ) -> Classification:
     result = classify_rules(email, profile, job_count)
 
-    ambiguous = result.confidence < 0.75 or result.category in (RECRUITER, OTHER)
+    if result.reason == "login/security code":
+        return _fill_from_email(result, email)
+
+    ambiguous = result.confidence < 0.75 or result.category == RECRUITER
+    if result.category == OTHER and result.confidence >= 0.7:
+        ambiguous = False
     if llm and llm.enabled and ambiguous and result.category != JOB_ALERT:
         data = llm.json(
             CLASSIFIER_PROMPT.format(

@@ -4,7 +4,7 @@
 <div class="page-head">
   <div>
     <h1>Charts</h1>
-    <div class="sub">How much mail each 15-minute extract actually fetched. Empty bars mean the window ran and found nothing new.</div>
+    <div class="sub">How much mail each extract window actually fetched. Empty bars mean the window ran and found nothing new.</div>
   </div>
 </div>
 
@@ -13,7 +13,7 @@
   {% if not runs %}
   <p class="lede">No extract windows recorded yet.</p>
   {% else %}
-  <div class="chart-row" title="Each column is one 15-minute poll. Height is emails fetched.">
+  <div class="chart-row" title="Each column is one poll window. Height is emails fetched.">
     {% for run in runs %}
     <div class="chart-col" title="{{ run.started_at | et('%b %d %I:%M %p') }} · fetched {{ run.fetched }} · new {{ run.processed }} · jobs {{ run.jobs_found }}">
       <div class="bar" style="height: {{ ((run.fetched or 0) / max_fetched * 100) if max_fetched else 0 }}%"></div>

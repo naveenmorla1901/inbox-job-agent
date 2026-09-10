@@ -55,7 +55,9 @@ class Settings(BaseSettings):
     groq_model: str = "openai/gpt-oss-20b"
     deepseek_api_key: str = ""
     nvidia_api_key: str = ""
+    nvidia_model: str = "meta/llama-3.1-70b-instruct"
     openrouter_api_key: str = ""
+    openrouter_model: str = "openai/gpt-oss-20b:free"
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
 
@@ -70,7 +72,7 @@ class Settings(BaseSettings):
     # Background auto-sync: the web app polls Gmail on its own every N seconds so
     # new mail shows up without any manual "check" button.
     auto_poll: bool = True
-    poll_interval_seconds: int = 900  # 15 minutes
+    poll_interval_seconds: int = 300  # how often to poll; Mail/Overview day filters stay as they are
 
     def path(self, value: str) -> Path:
         p = Path(value)

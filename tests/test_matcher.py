@@ -38,6 +38,8 @@ def test_unrelated_and_student_titles_are_not_worth_scraping():
 
     assert title_worth_scraping(PROFILE, "Machine Learning Engineer")
     assert title_worth_scraping(PROFILE, "AI Engineer")
+    assert title_worth_scraping(PROFILE, "Artificial Intelligence Engineer")
+    assert title_worth_scraping(PROFILE, "Artificial Intelligence / Machine Learning Engineer")
     assert not title_worth_scraping(PROFILE, "Human Resources Manager")
     assert not title_worth_scraping(PROFILE, "Premier Banker- Metuchen")
     assert not title_worth_scraping(PROFILE, "Data Science Student Experience - Spring 2027")
@@ -76,6 +78,7 @@ def test_years_parser_ignores_unrelated_numbers():
 
 def test_title_scoring_tiers():
     assert score_title(PROFILE, "AI Engineer")[0] == 1.0
+    assert score_title(PROFILE, "Artificial Intelligence Engineer")[0] == 1.0
     assert score_title(PROFILE, "Analytics Consultant")[0] >= 0.5
     assert score_title(PROFILE, "Warehouse Associate")[0] < 0.5
 

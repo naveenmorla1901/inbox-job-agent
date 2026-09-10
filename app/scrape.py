@@ -579,12 +579,18 @@ def fetch_job(candidate: JobCandidate, timeout: int = 15) -> ScrapedJob:
             return ScrapedJob(status="error", extraction="", final_url=url)
 
         if resp.status_code in (401, 403, 429, 451, 999) or not resp.text.strip():
-            retry = _get(client, original, GOOGLEBOT_HEADERS)
-            if retry is not None and retry.status_code < 400 and retry.text.strip():
-                resp, kind = retry, "html"
-            else:
-                status = "blocked" if resp.status_code in (401, 403, 429, 451, 999) else "empty"
-                return ScrapedJob(status=status, final_url=str(resp.url))
+            hop = interstitial_destination(resp.text or "", str(resp.url))
+            if hop and hop.split("?", 1)[0] != str(resp.url).split("?", 1)[0]:
+                nxt = _get(client, hop, HEADERS)
+                if nxt is not None and nxt.status_code < 400 and nxt.text.strip():
+                    resp, kind = nxt, "html"
+            if resp.status_code in (401, 403, 429, 451, 999) or not resp.text.strip():
+                retry = _get(client, original, GOOGLEBOT_HEADERS)
+                if retry is not None and retry.status_code < 400 and retry.text.strip():
+                    resp, kind = retry, "html"
+                else:
+                    status = "blocked" if resp.status_code in (401, 403, 429, 451, 999) else "empty"
+                    return ScrapedJob(status=status, final_url=str(resp.url))
 
         hop = interstitial_destination(resp.text, str(resp.url))
         if hop and hop.split("?", 1)[0] != str(resp.url).split("?", 1)[0]:

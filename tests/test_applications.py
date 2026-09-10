@@ -246,6 +246,19 @@ def test_longer_company_name_joins_the_existing_application(session):
     assert len(session.exec(select(Application)).all()) == 1
 
 
+def test_login_code_email_is_not_tracked_as_an_application(session):
+    outcome = feed(
+        session,
+        "no-reply@myworkday.com",
+        "Your verification code",
+        "Your verification code is 847291. Enter this code to sign in to your application.",
+        name="Workday",
+    )
+    assert outcome.classification.category == "other"
+    assert session.exec(select(Application)).first() is None
+    assert session.exec(select(ApplicationEvent)).first() is None
+
+
 def test_role_and_company_split_on_ats_reference_subjects():
     mail = plain_email(
         "dlapiper@myworkday.com",

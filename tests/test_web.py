@@ -53,7 +53,8 @@ def test_status_page_shows_auto_sync_and_no_manual_buttons(client):
     assert response.status_code == 200
     body = response.content
     assert b"Auto-sync" in body or b"Poll interval" in body
-    assert b"15 minutes" in body or b"min" in body
+    assert b"Poll interval" in body
+    assert b"min" in body
     assert b"Origin" in body
     # The manual controls were removed in favour of automatic syncing.
     assert b"Check now" not in body

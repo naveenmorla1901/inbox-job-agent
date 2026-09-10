@@ -68,7 +68,7 @@ python -m app.run poll --days 1       # everything that arrived today, ignoring 
 python -m app.run report --days 1     # how many alerts / interviews / assessments / other
 python -m app.run backfill --days 7   # rewind and re-read the last week
 python -m app.run serve               # dashboard at http://localhost:8000
-python -m app.run loop                # poll forever, every 15 min
+python -m app.run loop                # poll forever, every 5 min
 ```
 
 The dashboard has these pages:
@@ -102,7 +102,7 @@ Prints the score breakdown, matched skills, and missing skills so you can calibr
 
 This app runs on **Google Cloud Run**. Push to `main` → Cloud Build → new Cloud Run revision.
 Do not deploy from the laptop and from GitHub at the same time. Secrets stay in GCP.
-Gmail on Cloud Run is polled every **15 minutes** by Cloud Scheduler (`POST /api/run`).
+Gmail on Cloud Run is polled every **5 minutes** by Cloud Scheduler (`POST /api/run`).
 A new revision starts the cursor at deploy time (old mail is skipped).
 First-time steps: [`docs/deploy.md`](docs/deploy.md).
 

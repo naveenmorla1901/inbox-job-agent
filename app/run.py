@@ -237,7 +237,7 @@ def main() -> None:
         "loop",
         help="poll forever every N seconds from process start; skips mail from before boot",
     )
-    loop.add_argument("--interval", type=int, default=900)
+    loop.add_argument("--interval", type=int, default=300)
     loop.add_argument("--max", type=int, default=None)
     loop.set_defaults(func=cmd_loop)
 

@@ -76,14 +76,14 @@ PROVIDERS: dict[str, Provider] = {
         "nvidia",
         "https://integrate.api.nvidia.com/v1/chat/completions",
         "nvidia_api_key",
-        "nvidia/llama-3.1-nemotron-70b-instruct",
+        "meta/llama-3.1-70b-instruct",
         json_mode=False,  # NIM rejects response_format on several hosted models
     ),
     "openrouter": Provider(
         "openrouter",
         "https://openrouter.ai/api/v1/chat/completions",
         "openrouter_api_key",
-        "google/gemma-4-31b-it:free",
+        "openai/gpt-oss-20b:free",
     ),
     "ollama": Provider(
         "ollama",
@@ -163,6 +163,8 @@ class LLM:
             return self.settings.gemini_model or provider.default_model
         return {
             "groq": self.settings.groq_model,
+            "nvidia": self.settings.nvidia_model,
+            "openrouter": self.settings.openrouter_model,
             "ollama": self.settings.ollama_model,
         }.get(provider.name, provider.default_model) or provider.default_model
 
@@ -174,8 +176,11 @@ class LLM:
 
         spec = (getattr(settings, f"llm_chain_{task}", "") or settings.llm_chain).strip()
         if spec:
-            return self._with_second_gemini(
-                [(p, m or self._model_for(p)) for p, m in parse_chain(spec) if self.key_for(p)]
+            return self._with_remaining_keys(
+                self._with_second_gemini(
+                    [(p, m or self._model_for(p)) for p, m in parse_chain(spec) if self.key_for(p)]
+                ),
+                task,
             )
 
         # Any other provider value turns LLMs on and walks every key you have,
@@ -192,6 +197,22 @@ class LLM:
             out.append((provider, self._model_for(provider)))
             seen.add(name)
         return out
+
+    def _with_remaining_keys(
+        self, chain: list[tuple[Provider, str]], task: str
+    ) -> list[tuple[Provider, str]]:
+        """Keep the preferred order, then append every other key so a 429 cannot stall the run."""
+        seen = {provider.name for provider, _ in chain}
+        extra: list[tuple[Provider, str]] = []
+        for name in TASK_ORDER.get(task, CLASSIFY_ORDER):
+            if name in seen:
+                continue
+            provider = PROVIDERS.get(name)
+            if not provider or not self.key_for(provider):
+                continue
+            extra.append((provider, self._model_for(provider)))
+            seen.add(name)
+        return chain + extra
 
     def _with_second_gemini(
         self, chain: list[tuple[Provider, str]]
@@ -274,9 +295,15 @@ class LLM:
                 if status in AUTH_STATUS:
                     self._park(provider, 3600, f"rejected the key ({status})")
                     return ""
+                if status == 404:
+                    self._park(provider, 3600, "endpoint or model not found (404)")
+                    return ""
                 if status in RETRY_STATUS and attempt < MAX_ATTEMPTS:
                     time.sleep(BACKOFF_SECONDS * attempt)
                     continue
+                if status in RETRY_STATUS:
+                    self._park(provider, 180, f"unavailable ({status})")
+                    return ""
                 log.warning("%s failed (%s): %s", provider.name, model, self._redact(str(exc)))
                 try:
                     from .issues import record_issue

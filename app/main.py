@@ -60,7 +60,7 @@ def _gmail_configured() -> bool:
 
 
 def start_auto_poller() -> bool:
-    """Background thread: 15-minute windows counted from this process start.
+    """Background thread: poll windows counted from this process start.
 
     Cloud Run sleeps between requests, so production uses Cloud Scheduler → POST /api/run
     instead of this thread. Pytest and missing Gmail config leave this off.

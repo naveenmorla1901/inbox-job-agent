@@ -248,7 +248,7 @@
       </a>
     </nav>
     {% if request.url.path != '/login' %}
-    <span class="sync" title="15-minute windows from boot/deploy. Mail before origin is skipped.">
+    <span class="sync" title="{{ nav_sync.interval_min }}-minute windows from boot/deploy. Mail before origin is skipped.">
       <span class="dot {% if nav_sync.extracting %}{% elif not nav_sync.auto %}off{% endif %}"{% if nav_sync.extracting %} style="background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)"{% endif %}></span>
       {% if nav_sync.extracting %}
         Extracting {{ nav_sync.progress.index }}/{{ nav_sync.progress.total }}

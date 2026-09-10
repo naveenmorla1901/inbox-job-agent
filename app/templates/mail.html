@@ -57,7 +57,7 @@
 {% if not messages %}
 <div class="empty">
   <div class="big">No mail in this window</div>
-  Auto-sync starts at boot, skips older mail, and extracts every 15 minutes from that moment.
+  Auto-sync starts at boot, skips older mail, and extracts every {{ nav_sync.interval_min }} minutes from that moment.
 </div>
 {% else %}
 <div class="workspace">

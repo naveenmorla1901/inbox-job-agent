@@ -26,6 +26,17 @@ STOPWORDS = {
     "years", "year", "experience", "skills", "ability", "strong", "must", "should", "would",
 }
 REMOTE_HINT = re.compile(r"\b(remote|work from home|wfh|distributed|anywhere)\b", re.I)
+# Spoken-out names in postings ("Artificial Intelligence Engineer") should
+# still hit short targets like "AI Engineer".
+TITLE_FOLDS = (
+    (re.compile(r"\bartificial intelligence\b", re.I), "ai"),
+    (re.compile(r"\bmachine learning\b", re.I), "ml"),
+    (re.compile(r"\bnatural language processing\b", re.I), "nlp"),
+    (re.compile(r"\blarge language models?\b", re.I), "llm"),
+    (re.compile(r"\bgenerative ai\b", re.I), "genai"),
+    (re.compile(r"\bdeep learning\b", re.I), "dl"),
+)
+WEAK_TITLE_TOKENS = frozenset({"and", "or", "the", "of", "for", "in", "a", "an"})
 
 
 @dataclass
@@ -60,10 +71,36 @@ def _contains_term(haystack: str, term: str) -> bool:
     return term in haystack
 
 
+def fold_title(text: str) -> str:
+    """Collapse 'artificial intelligence' → 'ai' so target matching still works."""
+    t = f" {(text or '').lower()} "
+    t = t.replace("ai/ml", " ai ml ").replace("ai-ml", " ai ml ")
+    t = t.replace("/", " ").replace("-", " ")
+    for pattern, repl in TITLE_FOLDS:
+        t = pattern.sub(f" {repl} ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _title_tokens(text: str) -> set[str]:
+    return {tok for tok in re.findall(r"[a-z0-9+#]+", fold_title(text)) if tok not in WEAK_TITLE_TOKENS}
+
+
+def _title_hits_target(title: str, target: str) -> bool:
+    needle = (target or "").lower().strip()
+    if not needle:
+        return False
+    lowered = (title or "").lower()
+    if needle in lowered or fold_title(needle) in fold_title(title):
+        return True
+    wanted = _title_tokens(needle)
+    return bool(wanted) and wanted <= _title_tokens(title)
+
+
 def score_title(profile: Profile, title: str) -> tuple[float, bool]:
     t = (title or "").lower().strip()
     if not t:
         return 0.35, False
+    folded = fold_title(t)
     for bad in profile.exclude_titles:
         term = bad.lower().strip()
         if not term:
@@ -71,9 +108,13 @@ def score_title(profile: Profile, title: str) -> tuple[float, bool]:
         if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", t):
             return 0.0, True
     for target in profile.target_titles:
-        if target.lower() in t:
+        if _title_hits_target(t, target):
             return 1.0, False
-    hits = sum(1 for kw in profile.title_keywords if _contains_term(t, kw.lower()))
+    hits = sum(
+        1
+        for kw in profile.title_keywords
+        if _contains_term(t, kw.lower()) or _contains_term(folded, kw.lower())
+    )
     if hits >= 2:
         return 0.75, False
     if hits == 1:

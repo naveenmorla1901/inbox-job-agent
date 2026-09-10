@@ -1215,9 +1215,9 @@ def poll_since_cursor(max_messages: int | None = None, trigger: str = "api") -> 
 
 
 def interval_poll_loop(max_messages: int | None = None, interval_s: int | None = None) -> None:
-    """Wait 15 minutes from boot, extract that window, repeat.
+    """Wait one interval from boot, extract that window, repeat.
 
-    Boot at 6:03 → skip older mail → first run at 6:18 covering 6:03–6:18.
+    Boot at 6:03 → skip older mail → first run at 6:08 covering 6:03–6:08 when the interval is 5 minutes.
     """
     interval = max(60, interval_s or get_settings().poll_interval_seconds)
     init_db()

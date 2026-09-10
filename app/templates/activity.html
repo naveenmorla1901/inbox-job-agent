@@ -7,7 +7,7 @@
 <div class="page-head">
   <div>
     <h1>Status</h1>
-    <div class="sub">15-minute extract from the moment this revision started. Mail before that is skipped. Cloud Run is woken by Cloud Scheduler; this laptop uses an in-process loop.</div>
+    <div class="sub">{{ nav_sync.interval_min }}-minute extract from the moment this revision started. Mail before that is skipped. Cloud Run is woken by Cloud Scheduler; this laptop uses an in-process loop.</div>
   </div>
   <div class="actions" style="margin:0">
     <a class="btn-sm" href="/issues">Open issues{% if issue_counts.error %} ({{ issue_counts.error }} errors / 24h){% endif %}</a>
@@ -47,13 +47,13 @@
     {% endif %}
     {% if nav_sync.extracting %}<span class="tag warn">extracting {{ nav_sync.progress.index }}/{{ nav_sync.progress.total }}</span>{% endif %}
   </div>
-  <p class="lede">Push to <code>main</code> rebuilds Cloud Run. That new revision plants the cursor at deploy time, then every 15 minutes only new mail is read. Update Cloud Scheduler to <code>*/15 * * * *</code> if it is still on 30 minutes.</p>
+  <p class="lede">Push to <code>main</code> rebuilds Cloud Run. That new revision plants the cursor at deploy time, then every {{ nav_sync.interval_min }} minutes only new mail is read. Update Cloud Scheduler to <code>*/{{ nav_sync.interval_min }} * * * *</code> if the cron does not match.</p>
 </div>
 
 <div class="card">
   <h3>Extract history</h3>
   {% if not poll_runs %}
-  <p class="lede">No windows recorded yet. First extract is 15 minutes after origin.</p>
+  <p class="lede">No windows recorded yet. First extract is {{ nav_sync.interval_min }} minutes after origin.</p>
   {% else %}
   <table class="compact" style="margin-top:8px">
     <thead>

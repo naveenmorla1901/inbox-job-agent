@@ -130,6 +130,20 @@ def test_receipt_with_whats_next_boilerplate_is_not_a_follow_up():
     assert not result.is_follow_up
 
 
+def test_login_code_is_not_an_application_update():
+    result = classify_rules(
+        email(
+            "no-reply@myworkday.com",
+            "Your verification code",
+            "Your verification code is 847291. Enter this code to sign in.",
+        ),
+        PROFILE,
+    )
+    assert result.category == OTHER
+    assert result.email_type == "security"
+    assert not result.is_tracked
+
+
 def test_marketing_is_ignored():
     result = classify_rules(
         email("news@medium.com", "Your weekly newsletter", "Top stories this week. Unsubscribe from all."),

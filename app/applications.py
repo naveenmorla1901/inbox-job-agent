@@ -18,6 +18,7 @@ from .classify import (
 )
 from .config import get_profile
 from .email_parse import ParsedEmail
+from .job_fields import LOGIN_CODE_RE, SECURITY_RE
 from .models import Application, ApplicationEvent, Job, as_utc, utcnow
 
 # Later stages win; an application never walks backwards on its own.
@@ -338,6 +339,10 @@ def record_email(
     session: Session, email: ParsedEmail, result: Classification
 ) -> tuple[Application, bool] | None:
     """Create or update the application this email belongs to, and log a timeline event."""
+    blob = f"{email.subject}\n{email.body(2000)}"
+    if result.email_type == "security" or LOGIN_CODE_RE.search(blob) or SECURITY_RE.search(blob):
+        return None
+
     status = CATEGORY_STATUS.get(result.category)
     if status is None:
         return None

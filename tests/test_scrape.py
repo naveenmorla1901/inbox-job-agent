@@ -214,3 +214,49 @@ def test_workday_and_ashby_json_parsers():
     )
     assert ashby.ok
     assert ashby.title == "Data Scientist"
+
+
+def test_blocked_adzuna_page_follows_the_click_here_link(monkeypatch):
+    from app.extract_jobs import JobCandidate
+    from app.scrape import UA, fetch_job
+    from app import scrape as scrape_mod
+
+    wall = (
+        "<html><head><title>Adzuna Jobs Search</title></head><body>"
+        "If you are not redirected within 5 seconds, "
+        '<a href="https://jobs.example.com/ai-engineer">click here</a>.'
+        "</body></html>"
+    )
+    dest = (
+        "<html><head><title>AI Engineer</title>"
+        '<script type="application/ld+json">'
+        '{"@type":"JobPosting","title":"AI Engineer",'
+        '"description":"<p>' + ("Python SQL machine learning. " * 20) + '</p>","hiringOrganization":{"name":"Acme"}}'
+        "</script></head><body><main>Build models in Python and SQL. "
+        + ("machine learning " * 40)
+        + "</main></body></html>"
+    )
+
+    class Fake:
+        def __init__(self, status, text, url):
+            self.status_code = status
+            self.text = text
+            self.url = url
+            self.request = type("Req", (), {"headers": {"user-agent": UA}})()
+
+    def fake_get(_client, url, _headers):
+        if "adzuna.com" in url:
+            return Fake(403, wall, url)
+        return Fake(200, dest, url)
+
+    monkeypatch.setattr(scrape_mod, "_get", fake_get)
+    job = fetch_job(
+        JobCandidate(
+            url="https://www.adzuna.com/land/ad/5123456789",
+            url_key="adzuna:5123456789",
+            title="Artificial Intelligence Engineer",
+            source="adzuna",
+        )
+    )
+    assert job.ok
+    assert "AI Engineer" in job.title

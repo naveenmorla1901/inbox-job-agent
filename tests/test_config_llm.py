@@ -94,6 +94,21 @@ def test_explicit_chain_overrides_the_default_walk(monkeypatch, fresh_config):
     assert names[1][0] == "groq"
 
 
+def test_explicit_chain_still_appends_other_keys(monkeypatch, fresh_config):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "")
+    monkeypatch.setenv("GROQ_API_KEY", "q-key")
+    monkeypatch.setenv("NVIDIA_API_KEY", "n-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("LLM_CHAIN_CLASSIFY", "gemini:gemini-2.0-flash,groq")
+    llm = LLM(config.get_settings())
+    names = [p.name for p, _ in llm.chain("classify")]
+    assert names[:2] == ["gemini", "groq"]
+    assert names[2:] == ["nvidia", "deepseek"]
+
+
 def test_second_gemini_key_is_inserted_next_to_the_first(monkeypatch, fresh_config):
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "key-a")

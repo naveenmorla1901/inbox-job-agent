@@ -149,6 +149,13 @@ SECURITY_RE = re.compile(
     r"unusual sign[- ]in|new (login|sign[- ]in)|two[- ]factor)",
     re.I,
 )
+LOGIN_CODE_RE = re.compile(
+    r"(verification code|security code|one[- ]time (?:pass)?code|one[- ]time password|\botp\b|"
+    r"(?:sign[- ]?in|login|authentication) code|passcode|"
+    r"your code is\s*\d{4,8}|enter this code|multi[- ]factor authentication|"
+    r"2[- ]step verification|magic link to (?:sign|log) in)",
+    re.I,
+)
 
 COMMON_SKILLS = (
     "python",
@@ -406,7 +413,7 @@ def email_type_of(category: str, subject: str, body: str) -> str:
     if category != "other":
         return ""
     blob = f"{subject}\n{body}"
-    if SECURITY_RE.search(blob):
+    if SECURITY_RE.search(blob) or LOGIN_CODE_RE.search(blob):
         return "security"
     if WEBINAR_RE.search(blob):
         return "webinar"

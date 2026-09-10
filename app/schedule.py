@@ -1,6 +1,6 @@
-"""15-minute poll windows measured from process/revision start, not the wall clock.
+"""Poll windows measured from process/revision start, not the wall clock.
 
-Boot at 6:03 → skip mail before 6:03 → first extract at 6:18 covering 6:03–6:18.
+Boot at 6:03 → skip mail before 6:03 → first extract one interval later.
 Same revision waking from Cloud Run sleep keeps that origin so idle time is not dropped.
 """
 

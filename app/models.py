@@ -157,7 +157,7 @@ class Issue(SQLModel, table=True):
 
 
 class PollRun(SQLModel, table=True):
-    """One 15-minute extract window (or a boot marker)."""
+    """One extract window (or a boot marker)."""
 
     id: int | None = Field(default=None, primary_key=True)
     started_at: datetime = Field(default_factory=utcnow, index=True)
