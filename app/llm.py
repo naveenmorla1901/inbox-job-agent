@@ -117,6 +117,17 @@ def _cooling(name: str) -> bool:
     return False
 
 
+def _cooldown_label(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    if seconds >= 3600:
+        hours, rem = divmod(seconds, 3600)
+        minutes = rem // 60
+        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    if seconds >= 60:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
+
+
 def parse_chain(spec: str) -> list[tuple[Provider, str]]:
     """'gemini:gemini-2.0-flash, groq' -> [(gemini, gemini-2.0-flash), (groq, default)]"""
     chain: list[tuple[Provider, str]] = []
@@ -221,6 +232,19 @@ class LLM:
                 return answer
         if skipped:
             log.warning("every provider for %s is cooling down: %s", task, ", ".join(skipped))
+        if chain:
+            tried = [f"{p.name}:{model}" for p, model in chain]
+            try:
+                from .issues import record_issue
+
+                record_issue(
+                    "llm",
+                    f"No LLM answered {task}",
+                    "tried " + ", ".join(tried) + (f"; cooling: {', '.join(skipped)}" if skipped else ""),
+                    severity="error",
+                )
+            except Exception:
+                pass
         return ""
 
     def json(self, prompt: str, system: str = "", task: str = CLASSIFY, timeout: int = 45) -> dict[str, Any]:
@@ -254,9 +278,31 @@ class LLM:
                     time.sleep(BACKOFF_SECONDS * attempt)
                     continue
                 log.warning("%s failed (%s): %s", provider.name, model, self._redact(str(exc)))
+                try:
+                    from .issues import record_issue
+
+                    record_issue(
+                        "llm",
+                        f"LLM {provider.name} failed ({status})",
+                        self._redact(str(exc)),
+                        severity="error",
+                    )
+                except Exception:
+                    pass
                 return ""
             except Exception as exc:
                 log.warning("%s failed (%s): %s", provider.name, model, self._redact(str(exc)))
+                try:
+                    from .issues import record_issue
+
+                    record_issue(
+                        "llm",
+                        f"LLM {provider.name} failed",
+                        self._redact(str(exc)),
+                        severity="error",
+                    )
+                except Exception:
+                    pass
                 return ""
         return ""
 
@@ -279,6 +325,43 @@ class LLM:
             return
         _cooldowns[provider.name] = time.time() + gap
         log.info("%s resting %ds so the other Gemini key can take the next call", provider.name, gap)
+
+    def health(self) -> list[dict]:
+        """Live status for every provider we know about — Issues page uses this."""
+        now = time.time()
+        llm_off = (self.settings.llm_provider or "none").lower() == "none"
+        rows = []
+        for name, provider in PROVIDERS.items():
+            key = bool(self.key_for(provider))
+            until = float(_cooldowns.get(name) or 0)
+            cooling = key and until > now
+            remaining = max(0, int(until - now)) if cooling else 0
+            in_chain = any(p.name == name for p, _ in self.chain(EXTRACT) + self.chain(CLASSIFY))
+            model = self._model_for(provider) if key else ""
+            if not key:
+                status, detail = "off", "no API key"
+            elif cooling:
+                status, detail = "warn", f"cooling {_cooldown_label(remaining)} — last call failed or hit quota"
+            elif llm_off:
+                status, detail = "idle", "key present · LLM_PROVIDER=none"
+            elif in_chain:
+                status, detail = "ok", f"in chain · {model}"
+            else:
+                status, detail = "idle", f"key present, not in current chain · {model}"
+            rows.append(
+                {
+                    "name": name,
+                    "configured": key,
+                    "cooling": cooling,
+                    "cooling_seconds": remaining,
+                    "until": until if cooling else 0,
+                    "model": model,
+                    "in_chain": in_chain,
+                    "status": status,
+                    "detail": detail,
+                }
+            )
+        return rows
 
     def _redact(self, text: str) -> str:
         """Provider errors quote the request URL, which can carry the API key."""

@@ -22,16 +22,30 @@ def record_issue(
     severity: str = "error",
     message_id: str = "",
 ) -> None:
+    title = (title or "error")[:240]
+    detail = (detail or "")[:8000]
     try:
         init_db()
         with session_scope() as session:
+            recent = datetime.now(timezone.utc) - timedelta(minutes=10)
+            dup = session.exec(
+                select(Issue)
+                .where(
+                    Issue.source == source,
+                    Issue.title == title,
+                    Issue.occurred_at >= recent,
+                )
+                .limit(1)
+            ).first()
+            if dup:
+                return
             session.add(
                 Issue(
                     occurred_at=utcnow(),
                     source=source,
                     severity=severity,
-                    title=(title or "error")[:240],
-                    detail=(detail or "")[:8000],
+                    title=title,
+                    detail=detail,
                     message_id=message_id or "",
                 )
             )
@@ -72,4 +86,12 @@ def issue_counts(session: Session, *, hours: int = 24) -> dict[str, int]:
         out["total"] += count
         out[severity] = out.get(severity, 0) + count
         out[source] = out.get(source, 0) + count
+    return out
+
+
+def latest_by_source(session: Session) -> dict[str, Issue]:
+    rows = session.exec(select(Issue).order_by(col(Issue.occurred_at).desc()).limit(80)).all()
+    out: dict[str, Issue] = {}
+    for row in rows:
+        out.setdefault(row.source, row)
     return out

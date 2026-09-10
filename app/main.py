@@ -17,11 +17,13 @@ from .applications import CLOSED_STATUSES, STATUS_RANK, create_from_job, stale_a
 from .classify import FOLLOW_UP_KINDS, NOREPLY_RE
 from .config import ROOT, get_profile, get_settings
 from .db import get_engine, init_db
-from .gmail_client import host_setup, parse_gmail_push
-from .issues import issue_counts, recent_issues
+from .gmail_client import gmail_token_status, host_setup, parse_gmail_push
+from .issues import issue_counts, latest_by_source, recent_issues
 from .models import Application, ApplicationEvent, Job, Message, Outreach
 from .pipeline import (
     clear_inbox,
+    count_purge_window,
+    email_from_message,
     ensure_poll_origin,
     load_last_run,
     load_poll_origin,
@@ -30,12 +32,16 @@ from .pipeline import (
     maybe_renew_watch,
     parse_extract_payload,
     poll_since_cursor,
+    purge_window,
+    reextract_email,
+    rescrape_job,
     run_once,
     start_gmail_watch,
 )
-from .reporting import CATEGORY_LABELS, CATEGORY_ORDER, build_breakdown
+from .probe import probe_apis
+from .reporting import CATEGORY_LABELS, CATEGORY_ORDER, application_funnel, build_breakdown, window_bounds
 from .schedule import next_tick_epoch
-from .timefmt import fmt_et, group_by_et_day
+from .timefmt import et_day_label, fmt_et, group_by_et_day
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 # httpx logs full request URLs at INFO, which would print API keys carried in query strings.
@@ -104,6 +110,7 @@ def _template_nav(_request: Request) -> dict:
     pending = 0
     origin = 0
     open_errors = 0
+    open_flags = 0
     interval = max(60, settings.poll_interval_seconds)
     now = datetime.now(timezone.utc)
     try:
@@ -113,6 +120,11 @@ def _template_nav(_request: Request) -> dict:
             pending = pending_outreach_count(session)
             origin = load_poll_origin(session)
             open_errors = issue_counts(session, hours=24).get("error", 0)
+            open_flags = session.exec(
+                select(func.count())
+                .select_from(Message)
+                .where(Message.flagged_category != "")
+            ).one()
     except Exception:
         pass
     if origin:
@@ -124,6 +136,7 @@ def _template_nav(_request: Request) -> dict:
     return {
         "nav_pending": pending,
         "nav_errors": open_errors,
+        "nav_flags": int(open_flags or 0),
         "nav_sync": {
             "auto": settings.auto_poll,
             "interval_min": max(1, interval // 60),
@@ -289,6 +302,7 @@ def mail_page(
     m: str = "",
     view: str = "analysis",
     checked: str = "",
+    flash: str = "",
 ):
     messages, jobs_by_mail, outreach_by_mail = mail_bundle(
         session, days=days, category=category, q=q, has=has
@@ -300,8 +314,8 @@ def mail_page(
     selected = next((row for row in messages if row.id == m), None)
     if selected is None and messages:
         selected = messages[0]
-    flash = ""
-    if checked:
+    flash = flash or ""
+    if checked and not flash:
         last = load_last_run(session)
         flash = (
             f"Checked {last.get('fetched', 0)} email(s). "
@@ -436,8 +450,13 @@ def overview_page(
     days: int = 1,
     since: str = "",
     until: str = "",
+    flash: str = "",
+    app_q: str = "",
 ):
     report = build_breakdown(session, days=days, since=since or None, until=until or None)
+    start, end, _, _ = window_bounds(days=days, since=since or None, until=until or None)
+    purge_counts = count_purge_window(session, start, end)
+    funnel = application_funnel(session, start, end, q=app_q)
     return templates.TemplateResponse(
         request,
         "overview.html",
@@ -446,9 +465,35 @@ def overview_page(
             "days": days,
             "since": since,
             "until": until,
+            "app_q": app_q,
+            "funnel": funnel,
+            "purge_counts": purge_counts,
+            "purge_total": sum(purge_counts.values()),
+            "flash": flash,
             "pending_outreach": pending_outreach_count(session),
         },
     )
+
+
+@app.post("/overview/purge")
+def overview_purge(
+    request: Request,
+    session: Session = Depends(db_session),
+    days: int = Form(1),
+    since: str = Form(""),
+    until: str = Form(""),
+):
+    require_token(request)
+    start, end, label, _ = window_bounds(days=days, since=since or None, until=until or None)
+    counts = purge_window(session, start, end)
+    bits = [f"{n} {name}" for name, n in counts.items() if n]
+    q = {"days": str(days)}
+    if since:
+        q["since"] = since
+    if until:
+        q["until"] = until
+    q["flash"] = f"Deleted {', '.join(bits) or 'nothing'} for {label}. Gmail itself was not touched."
+    return RedirectResponse(f"/overview?{urlencode(q)}", status_code=303)
 
 
 def _activity_context(session: Session, **extra) -> dict:
@@ -500,17 +545,98 @@ def activity_page(
     )
 
 
+def _issues_api_rows(session: Session) -> tuple[list[dict], bool, str]:
+    """Live Gmail + LLM status for the Issues page, plus last recorded event."""
+    latest = latest_by_source(session)
+    gmail = gmail_token_status()
+    apis: list[dict] = [
+        {
+            "name": "Gmail",
+            "source": "gmail",
+            "status": gmail["status"],
+            "detail": gmail["detail"],
+            "last": latest.get("gmail"),
+        }
+    ]
+    llm = None
+    llm_last = latest.get("llm")
+    llm_last_attached = False
+    try:
+        from .llm import LLM
+
+        llm = LLM(get_settings())
+        for row in llm.health():
+            if not row["configured"] and not row["in_chain"]:
+                continue
+            apis.append(
+                {
+                    "name": f"LLM · {row['name']}",
+                    "source": "llm",
+                    "status": row["status"],
+                    "detail": row["detail"],
+                    "last": None if llm_last_attached else llm_last,
+                }
+            )
+            llm_last_attached = True
+        listed_llm = any(row["name"].startswith("LLM") for row in apis)
+        if llm.enabled and not listed_llm:
+            apis.append(
+                {
+                    "name": "LLM",
+                    "source": "llm",
+                    "status": "error",
+                    "detail": "LLM is on but no provider has an API key",
+                    "last": llm_last,
+                }
+            )
+        elif not llm.enabled and not listed_llm:
+            apis.append(
+                {
+                    "name": "LLM",
+                    "source": "llm",
+                    "status": "idle",
+                    "detail": "LLM_PROVIDER=none — classify/extract use rules only",
+                    "last": llm_last,
+                }
+            )
+    except Exception as exc:
+        apis.append(
+            {
+                "name": "LLM",
+                "source": "llm",
+                "status": "error",
+                "detail": str(exc)[:240],
+                "last": latest.get("llm"),
+            }
+        )
+    for source in ("scrape", "poll", "config"):
+        last = latest.get(source)
+        if last:
+            apis.append(
+                {
+                    "name": source.title(),
+                    "source": source,
+                    "status": "error" if last.severity == "error" else "warn",
+                    "detail": last.title,
+                    "last": last,
+                }
+            )
+    return apis, bool(llm and llm.enabled), (llm.describe("extract") if llm else "none")
+
+
 @app.get("/issues", response_class=HTMLResponse)
 def issues_page(
     request: Request,
     session: Session = Depends(db_session),
     source: str = "",
     hours: int = 168,
+    flash: str = "",
 ):
     hours = max(1, min(int(hours or 168), 720))
     rows = recent_issues(session, hours=hours, source=source)
     counts = issue_counts(session, hours=24)
     week = issue_counts(session, hours=hours)
+    apis, llm_enabled, llm_chain = _issues_api_rows(session)
     return templates.TemplateResponse(
         request,
         "issues.html",
@@ -520,9 +646,22 @@ def issues_page(
             "hours": hours,
             "counts": counts,
             "week": week,
+            "apis": apis,
+            "llm_enabled": llm_enabled,
+            "llm_chain": llm_chain,
+            "flash": flash,
             "sources": ["gmail", "llm", "scrape", "poll", "config"],
         },
     )
+
+
+@app.post("/issues/probe")
+def issues_probe(request: Request):
+    require_token(request)
+    results = probe_apis()
+    bits = [f"{row['name']} {'ok' if row['ok'] else 'failed'}" for row in results]
+    flash = "Probe: " + "; ".join(bits)
+    return RedirectResponse(f"/issues?{urlencode({'flash': flash})}", status_code=303)
 
 
 @app.post("/activity/check")
@@ -580,13 +719,18 @@ def api_breakdown(
 
 
 @app.get("/job/{job_id}", response_class=HTMLResponse)
-def job_detail(job_id: int, request: Request, session: Session = Depends(db_session)):
+def job_detail(
+    job_id: int,
+    request: Request,
+    session: Session = Depends(db_session),
+    flash: str = "",
+):
     job = session.get(Job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
     message = session.get(Message, job.message_id)
     return templates.TemplateResponse(
-        request, "job_detail.html", {"job": job, "message": message}
+        request, "job_detail.html", {"job": job, "message": message, "flash": flash}
     )
 
 
@@ -610,6 +754,136 @@ def set_job_status(
         create_from_job(session, job)
     session.commit()
     return RedirectResponse(redirect, status_code=303)
+
+
+@app.post("/mail/{message_id}/flag")
+def flag_mail(
+    message_id: str,
+    request: Request,
+    session: Session = Depends(db_session),
+    category: str = Form(""),
+    apply: str = Form(""),
+    redirect: str = Form("/"),
+):
+    require_token(request)
+    row = session.get(Message, message_id)
+    if not row:
+        raise HTTPException(404, "message not found")
+    category = (category or "").strip()
+    if category and category not in CATEGORY_LABELS:
+        raise HTTPException(400, "bad category")
+    if not category:
+        row.flagged_category = ""
+        row.flagged_at = None
+        flash = "Flag cleared."
+    else:
+        row.flagged_category = category
+        row.flagged_at = datetime.now(timezone.utc)
+        flash = f"Flagged as {CATEGORY_LABELS.get(category, category)}."
+        if apply:
+            row.category = category
+            flash = f"Set category to {CATEGORY_LABELS.get(category, category)}."
+    session.add(row)
+    session.commit()
+    dest = safe_next(redirect, "/")
+    sep = "&" if "?" in dest else "?"
+    return RedirectResponse(f"{dest}{sep}{urlencode({'flash': flash})}", status_code=303)
+
+
+@app.post("/mail/{message_id}/reextract")
+def reextract_mail(
+    message_id: str,
+    request: Request,
+    session: Session = Depends(db_session),
+    redirect: str = Form("/"),
+):
+    require_token(request)
+    row = session.get(Message, message_id)
+    if not row:
+        raise HTTPException(404, "message not found")
+    from .llm import LLM
+
+    outcome = reextract_email(session, email_from_message(row), LLM())
+    session.commit()
+    flash = (
+        f"Re-extracted this email: {outcome.jobs_found} posting(s), "
+        f"{len(outcome.matched_jobs)} match."
+    )
+    dest = safe_next(redirect, f"/?m={message_id}&days=30")
+    sep = "&" if "?" in dest else "?"
+    return RedirectResponse(f"{dest}{sep}{urlencode({'flash': flash})}", status_code=303)
+
+
+@app.post("/job/{job_id}/rescrape")
+def rescrape_job_page(
+    job_id: int,
+    request: Request,
+    session: Session = Depends(db_session),
+    redirect: str = Form(""),
+):
+    require_token(request)
+    from .llm import LLM
+
+    job = rescrape_job(session, job_id, LLM())
+    if job is None:
+        raise HTTPException(404, "job not found")
+    session.commit()
+    flash = f"Refetched {job.title or 'posting'}: fetch {job.scrape_status or '?'}, score {job.score:.2f}."
+    dest = safe_next(redirect or f"/job/{job.id}", f"/job/{job.id}")
+    sep = "&" if "?" in dest else "?"
+    return RedirectResponse(f"{dest}{sep}{urlencode({'flash': flash})}", status_code=303)
+
+
+@app.get("/flags", response_class=HTMLResponse)
+def flags_page(request: Request, session: Session = Depends(db_session)):
+    rows = session.exec(
+        select(Message)
+        .where(Message.flagged_category != "")
+        .order_by(col(Message.flagged_at).desc())
+        .limit(200)
+    ).all()
+    return templates.TemplateResponse(
+        request,
+        "flags.html",
+        {
+            "flags": rows,
+            "category_labels": CATEGORY_LABELS,
+            "category_order": CATEGORY_ORDER,
+        },
+    )
+
+
+@app.get("/charts", response_class=HTMLResponse)
+def charts_page(request: Request, session: Session = Depends(db_session)):
+    runs = list(reversed(load_poll_runs(session, 96)))
+    max_fetched = max((run.fetched for run in runs), default=1) or 1
+    max_jobs = max((run.jobs_found for run in runs), default=1) or 1
+    day_map: dict[str, dict] = {}
+    for run in runs:
+        label = et_day_label(run.started_at) if run.started_at else "unknown"
+        bucket = day_map.setdefault(
+            label,
+            {"fetched": 0, "processed": 0, "jobs_found": 0, "jobs_matched": 0, "runs": 0, "errors": 0},
+        )
+        bucket["fetched"] += run.fetched or 0
+        bucket["processed"] += run.processed or 0
+        bucket["jobs_found"] += run.jobs_found or 0
+        bucket["jobs_matched"] += run.jobs_matched or 0
+        bucket["runs"] += 1
+        bucket["errors"] += 1 if run.status == "error" else 0
+    days = list(day_map.items())
+    day_max = max((row["fetched"] for _, row in days), default=1) or 1
+    return templates.TemplateResponse(
+        request,
+        "charts.html",
+        {
+            "runs": runs,
+            "max_fetched": max_fetched,
+            "max_jobs": max_jobs,
+            "days": days,
+            "day_max": day_max,
+        },
+    )
 
 
 @app.get("/applications", response_class=HTMLResponse)

@@ -90,6 +90,29 @@ def test_click_trackers_are_unwrapped():
     assert canonical_key(wrapped) == "greenhouse:4567890"
 
 
+def test_ashby_workday_and_workable_keys():
+    assert (
+        canonical_key("https://jobs.ashbyhq.com/openai/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        == "ashby:openai:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    )
+    workday = (
+        "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/"
+        "job/Santa-Clara-CA/Software-Engineer_JR123"
+    )
+    key = canonical_key(workday)
+    assert key.startswith("workday:")
+    assert "Software-Engineer_JR123" in key
+    assert source_of(workday) == "workday"
+    assert (
+        canonical_key("https://apply.workable.com/acme/j/ABC123/")
+        == "workable:acme:ABC123"
+    )
+    assert (
+        canonical_key("https://jobs.smartrecruiters.com/Acme/12345-data-scientist")
+        == "smartrecruiters:Acme:12345-data-scientist"
+    )
+
+
 def test_adzuna_digest_urls_are_postings():
     url = "https://www.adzuna.com/land/ad/5123456789"
     assert source_of(url) == "adzuna"

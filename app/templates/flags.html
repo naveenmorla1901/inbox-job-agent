@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Flags — Inbox Job Agent{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Wrong-category flags</h1>
+    <div class="sub">Mail you marked as misclassified. Use this table to see misses, then set the correct category on Mail.</div>
+  </div>
+</div>
+
+{% if not flags %}
+<div class="empty">
+  <div class="big">No flags yet</div>
+  Open an email on Mail, pick the category it should have been, and click Flag.
+</div>
+{% else %}
+<table class="compact">
+  <thead>
+    <tr>
+      <th>When flagged</th>
+      <th>Classified as</th>
+      <th>Should be</th>
+      <th>Subject</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for item in flags %}
+  <tr>
+    <td class="mono">{{ item.flagged_at | et("%b %d, %I:%M %p ET") }}</td>
+    <td><span class="tag">{{ category_labels.get(item.category, item.category) }}</span></td>
+    <td><span class="tag warn">{{ category_labels.get(item.flagged_category, item.flagged_category) }}</span></td>
+    <td>
+      <a href="/?m={{ item.id }}&days=30"><b>{{ item.subject[:90] or "(no subject)" }}</b></a>
+      <div class="meta">{{ item.sender }} · {{ item.received_at | et("%b %d") }}</div>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

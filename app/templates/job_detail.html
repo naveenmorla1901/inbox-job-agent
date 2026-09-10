@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ job.title }} — Inbox Job Agent{% endblock %}
 {% block content %}
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
 <div class="page-head">
   <div><a class="muted-link" href="/matches">← Back to matches</a></div>
 </div>
@@ -18,7 +19,7 @@
       </div>
       <div class="tags mt">
         <span class="tag {% if job.status != 'new' %}accent{% endif %}">status: {{ job.status }}</span>
-        <span class="tag {% if job.scrape_status == 'ok' %}good{% elif job.scrape_status == 'blocked' %}warn{% endif %}">fetch: {{ job.scrape_status or "?" }}{% if job.extraction %} · {{ job.extraction }}{% endif %}</span>
+        <span class="tag {% if job.scrape_status == 'ok' %}good{% elif job.scrape_status == 'blocked' %}warn{% elif job.scrape_status == 'empty' %}warn{% endif %}">fetch: {{ job.scrape_status or "?" }}{% if job.extraction %} · {{ job.extraction }}{% endif %}</span>
         {% if job.employment_type %}<span class="tag">{{ job.employment_type }}</span>{% endif %}
         {% if job.salary %}<span class="tag good">{{ job.salary }}</span>{% endif %}
         {% if job.visa_sponsorship %}<span class="tag warn">{{ job.visa_sponsorship }}</span>{% endif %}
@@ -37,6 +38,12 @@
   </div>
   <div class="actions">
     <a class="tag" href="{{ job.url }}" target="_blank" rel="noopener">Open posting →</a>
+    {% if job.url %}
+    <form method="post" action="/job/{{ job.id }}/rescrape">
+      <input type="hidden" name="redirect" value="/job/{{ job.id }}">
+      <button type="submit" class="btn-sm">Retry fetch</button>
+    </form>
+    {% endif %}
     <span class="divider"></span>
     {% for action in ["saved", "applied", "ignored", "new"] if action != job.status %}
     <form method="post" action="/job/{{ job.id }}/status">

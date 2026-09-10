@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
-from sqlmodel import Session, col, func, select
+from sqlmodel import Session, col, func, or_, select
 
 from .classify import (
     APPLICATION_UPDATE,
@@ -239,3 +239,59 @@ def build_breakdown(
         .limit(10)
     ).all()
     return report
+
+
+FUNNEL_STAGES = ("applied", "in_review", "next_step", "assessment", "interview", "offer")
+FUNNEL_EXITS = ("rejected", "withdrawn")
+
+
+@dataclass
+class Funnel:
+    q: str = ""
+    total: int = 0
+    stages: list[tuple[str, int]] = field(default_factory=list)
+    exits: list[tuple[str, int]] = field(default_factory=list)
+    interview_rate: float = 0.0
+    offer_rate: float = 0.0
+    peak: int = 1
+    rows: list[Application] = field(default_factory=list)
+
+
+def application_funnel(
+    session: Session,
+    start: datetime,
+    end: datetime,
+    q: str = "",
+) -> Funnel:
+    """Applications touched in the Overview window, searchable by company or role."""
+    stmt = select(Application).where(
+        or_(
+            (Application.applied_at >= start) & (Application.applied_at < end),
+            (Application.last_event_at >= start) & (Application.last_event_at < end),
+        )
+    )
+    query = (q or "").strip()
+    if query:
+        like = f"%{query.lower()}%"
+        stmt = stmt.where(
+            func.lower(Application.company).like(like)
+            | func.lower(Application.role).like(like)
+            | func.lower(Application.status).like(like)
+        )
+    rows = list(session.exec(stmt.order_by(col(Application.last_event_at).desc())).all())
+    counts: dict[str, int] = {status: 0 for status in (*FUNNEL_STAGES, *FUNNEL_EXITS)}
+    for row in rows:
+        counts[row.status] = counts.get(row.status, 0) + 1
+    base = max(1, len(rows))
+    interviews = sum(counts.get(status, 0) for status in ("interview", "offer"))
+    offers = counts.get("offer", 0)
+    return Funnel(
+        q=query,
+        total=len(rows),
+        stages=[(status, counts.get(status, 0)) for status in FUNNEL_STAGES],
+        exits=[(status, counts.get(status, 0)) for status in FUNNEL_EXITS],
+        interview_rate=interviews / base,
+        offer_rate=offers / base,
+        peak=max([counts.get(status, 0) for status in (*FUNNEL_STAGES, *FUNNEL_EXITS)] + [1]),
+        rows=rows[:80],
+    )

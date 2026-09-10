@@ -172,3 +172,18 @@ def match_job(
         missing_skills=missing,
         verdict=verdict,
     )
+
+
+def promote_empty_scrape_match(result: MatchResult, min_score: float, page_ok: bool) -> MatchResult:
+    """A strong title still counts when the posting page came back empty.
+
+    Without a job description, skill/resume scores sit near zero and a perfect
+    title match (0.40) falls under the usual 0.45 threshold. Lift those rows so
+    they still show on Matches, with a verdict that the page itself was empty.
+    """
+    if page_ok or result.rejected:
+        return result
+    if result.title_score >= 0.75 and result.score < min_score:
+        result.score = round(float(min_score), 3)
+        result.verdict = f"{result.verdict} · title match (job page empty)"
+    return result

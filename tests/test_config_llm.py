@@ -133,3 +133,29 @@ def test_gemini_keys_alternate_after_each_success(monkeypatch, fresh_config):
     assert llm.complete("one")
     assert llm.complete("two")
     assert used == ["gemini", "gemini2"]
+
+
+def test_health_marks_cooling_and_missing_keys(monkeypatch, fresh_config):
+    from app import llm as llm_mod
+
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "key-a")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "")
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.setenv("NVIDIA_API_KEY", "")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("LLM_CHAIN", "")
+    monkeypatch.setenv("LLM_CHAIN_CLASSIFY", "")
+    monkeypatch.setenv("LLM_CHAIN_EXTRACT", "")
+    llm_mod.reset_cooldowns()
+    llm = LLM(config.get_settings())
+    by_name = {row["name"]: row for row in llm.health()}
+    assert by_name["gemini"]["status"] == "ok"
+    assert by_name["gemini"]["in_chain"] is True
+    assert by_name["groq"]["status"] == "off"
+    llm_mod._cooldowns["gemini"] = 10**12
+    cooling = {row["name"]: row for row in llm.health()}["gemini"]
+    assert cooling["status"] == "warn"
+    assert cooling["cooling"] is True
+    llm_mod.reset_cooldowns()

@@ -69,6 +69,54 @@ def gmail_token_present(settings: Settings | None = None) -> bool:
     return bool(read_gmail_token_text(settings).strip())
 
 
+def gmail_token_status(settings: Settings | None = None) -> dict[str, Any]:
+    """Live Gmail token check for the Issues page. Does not call Google."""
+    settings = settings or get_settings()
+    text = read_gmail_token_text(settings)
+    if not text.strip():
+        return {
+            "ok": False,
+            "present": False,
+            "refresh": False,
+            "status": "error",
+            "detail": "No Gmail token on this service",
+        }
+    try:
+        info = json.loads(text)
+    except json.JSONDecodeError:
+        return {
+            "ok": False,
+            "present": True,
+            "refresh": False,
+            "status": "error",
+            "detail": "Gmail token JSON is invalid",
+        }
+    if not isinstance(info, dict):
+        return {
+            "ok": False,
+            "present": True,
+            "refresh": False,
+            "status": "error",
+            "detail": "Gmail token JSON is not an object",
+        }
+    refresh = bool(str(info.get("refresh_token") or "").strip())
+    if refresh:
+        return {
+            "ok": True,
+            "present": True,
+            "refresh": True,
+            "status": "ok",
+            "detail": "Refresh token present",
+        }
+    return {
+        "ok": False,
+        "present": True,
+        "refresh": False,
+        "status": "error",
+        "detail": "Token has no refresh_token — Gmail will fail after the access token expires",
+    }
+
+
 def cloud_service_name() -> str:
     return (os.environ.get("K_SERVICE") or "").strip()
 

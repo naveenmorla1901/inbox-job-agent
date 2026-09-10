@@ -1,6 +1,16 @@
 from bs4 import BeautifulSoup
 
-from app.scrape import _from_html, _from_jsonld, _from_linkedin, interstitial_destination, page_is_interstitial
+from app.scrape import (
+    _from_ashby,
+    _from_html,
+    _from_jsonld,
+    _from_linkedin,
+    _from_workday,
+    greenhouse_board_from_html,
+    interstitial_destination,
+    page_is_interstitial,
+    workday_cxs_url,
+)
 
 JSONLD_PAGE = """
 <html><head>
@@ -157,3 +167,50 @@ def test_language_picker_chrome_is_not_a_job_description():
     )
     job = _from_html(BeautifulSoup(page, "lxml"))
     assert not job.ok
+
+
+def test_workday_cxs_url_uses_tenant_site_and_job_path():
+    url = (
+        "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/"
+        "job/Santa-Clara-CA/Software-Engineer_JR123"
+    )
+    api = workday_cxs_url(url)
+    assert api.endswith(
+        "/wday/cxs/nvidia/NVIDIAExternalCareerSite/job/Santa-Clara-CA/Software-Engineer_JR123"
+    )
+
+
+def test_greenhouse_board_is_discovered_in_html():
+    html = '<script src="https://boards-api.greenhouse.io/v1/boards/stripe/embed/job_board"></script>'
+    assert greenhouse_board_from_html(html) == "stripe"
+
+
+def test_workday_and_ashby_json_parsers():
+    workday = _from_workday(
+        {
+            "jobPostingInfo": {
+                "title": "ML Engineer",
+                "jobDescription": "<p>Build models in Python and PyTorch.</p>",
+                "location": "Remote",
+                "timeType": "Full time",
+            }
+        }
+    )
+    assert workday.ok
+    assert workday.title == "ML Engineer"
+    assert "PyTorch" in workday.description
+    ashby = _from_ashby(
+        {
+            "jobs": [
+                {
+                    "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "title": "Data Scientist",
+                    "descriptionHtml": "<p>SQL and Python.</p>",
+                    "locationName": "Austin, TX",
+                }
+            ]
+        },
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    )
+    assert ashby.ok
+    assert ashby.title == "Data Scientist"

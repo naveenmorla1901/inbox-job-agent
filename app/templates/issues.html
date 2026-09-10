@@ -1,11 +1,52 @@
 {% extends "base.html" %}
 {% block title %}Issues — Inbox Job Agent{% endblock %}
 {% block content %}
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
 <div class="page-head">
   <div>
     <h1>Issues</h1>
-    <div class="sub">Gmail, LLM, scrape, and poll failures with timestamps. Use this when something is missing from Mail.</div>
+    <div class="sub">Live Gmail and LLM status, plus Gmail, LLM, scrape, and poll failures with timestamps.</div>
   </div>
+  <form method="post" action="/issues/probe" class="actions" style="margin:0">
+    <button type="submit" class="btn-primary">Probe APIs</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Live APIs</h3>
+  <p class="lede">Gmail token and every LLM key on this service, not only logged Gmail errors. Cooling means that provider hit quota or rejected a call and is skipped for a while. <b>Probe APIs</b> makes one live call to Gmail and each LLM — use it when something looks down.</p>
+  <table class="compact" style="margin-top:10px">
+    <thead>
+      <tr>
+        <th style="width:160px">Service</th>
+        <th style="width:90px">Status</th>
+        <th>Now</th>
+        <th>Last recorded event</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for item in apis %}
+    <tr>
+      <td><b>{{ item.name }}</b></td>
+      <td>
+        <span class="tag {% if item.status == 'ok' %}good{% elif item.status == 'warn' %}warn{% elif item.status == 'error' %}bad{% endif %}">{{ item.status }}</span>
+      </td>
+      <td>{{ item.detail }}</td>
+      <td>
+        {% if item.last %}
+        <div>{{ item.last.title }}</div>
+        <div class="meta">{{ item.last.occurred_at | et("%b %d, %I:%M:%S %p ET") }} · {{ item.last.severity }}</div>
+        {% else %}
+        <span class="meta">—</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if llm_enabled %}
+  <div class="tags mt"><span class="tag accent">extract chain · {{ llm_chain }}</span></div>
+  {% endif %}
 </div>
 
 <form class="toolbar" method="get" action="/issues">
@@ -33,13 +74,14 @@
   <div class="kpi"><div class="n" style="{% if counts.warn %}color:var(--warn){% endif %}">{{ counts.warn|default(0) }}</div><div class="l">Warnings / 24h</div></div>
   <div class="kpi"><div class="n">{{ counts.gmail|default(0) }}</div><div class="l">Gmail / 24h</div></div>
   <div class="kpi"><div class="n">{{ counts.llm|default(0) }}</div><div class="l">LLM / 24h</div></div>
+  <div class="kpi"><div class="n">{{ counts.scrape|default(0) }}</div><div class="l">Scrape / 24h</div></div>
   <div class="kpi"><div class="n">{{ week.total|default(0) }}</div><div class="l">Events in this filter</div></div>
 </div>
 
 {% if not issues %}
 <div class="empty">
   <div class="big">No issues in this window</div>
-  Failures from Gmail list/get, LLM rate limits, and extract crashes show up here with the exact time.
+  Failures from Gmail, LLM keys, scrapes, and extract crashes show up here with the exact time.
 </div>
 {% else %}
 <div class="card" style="padding:0; overflow:auto">

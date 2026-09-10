@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from html import unescape as html_unescape
 
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -349,6 +349,165 @@ def _from_lever(data: dict) -> ScrapedJob:
     )
 
 
+def _from_ashby(data: dict, job_id: str = "") -> ScrapedJob:
+    jobs = data.get("jobs") if isinstance(data.get("jobs"), list) else [data]
+    match = None
+    for item in jobs:
+        if not isinstance(item, dict):
+            continue
+        if job_id and str(item.get("id") or item.get("jobId") or "") == job_id:
+            match = item
+            break
+        if not job_id:
+            match = item
+            break
+    if match is None:
+        return ScrapedJob(status="empty", extraction="ashby")
+    html = str(match.get("descriptionHtml") or match.get("description") or "")
+    plain = str(match.get("descriptionPlain") or "")
+    body = html_to_text(html) if html.strip() else plain
+    location = str(match.get("locationName") or match.get("location") or "")
+    if isinstance(match.get("location"), dict):
+        location = str(match["location"].get("name") or location)
+    if match.get("isRemote") or str(match.get("workplaceType") or "").lower() == "remote":
+        location = (location + " Remote").strip()
+    return ScrapedJob(
+        title=clean_text(str(match.get("title") or ""))[:200],
+        company=clean_text(str(match.get("departmentName") or match.get("team") or ""))[:150],
+        location=clean_text(str(location))[:150],
+        description=clean_text(body)[:20000],
+        employment_type=clean_text(str(match.get("employmentType") or ""))[:40],
+        ok=bool(body.strip()),
+        status="ok" if body.strip() else "empty",
+        extraction="ashby",
+        posting_id=str(match.get("id") or job_id)[:120],
+        source_type="official_career_site",
+    )
+
+
+def _from_workday(data: dict) -> ScrapedJob:
+    info = data.get("jobPostingInfo") if isinstance(data.get("jobPostingInfo"), dict) else data
+    if not isinstance(info, dict):
+        return ScrapedJob(status="empty", extraction="workday")
+    html = str(info.get("jobDescription") or info.get("jobDescriptionText") or "")
+    body = html_to_text(html) if "<" in html else clean_text(html)
+    location = str(info.get("location") or info.get("jobRequisitionLocation") or "")
+    if isinstance(info.get("additionalLocations"), list):
+        extra = ", ".join(str(x) for x in info["additionalLocations"] if x)
+        location = ", ".join(p for p in (location, extra) if p)
+    posted = str(info.get("postedOn") or info.get("startDate") or "")[:10]
+    return ScrapedJob(
+        title=clean_text(str(info.get("title") or ""))[:200],
+        company=clean_text(str(info.get("hiringOrganization") or ""))[:150],
+        location=clean_text(location)[:150],
+        description=body[:20000],
+        posted_at=posted if re.match(r"20\d{2}-\d{2}-\d{2}", posted) else "",
+        employment_type=clean_text(str(info.get("timeType") or info.get("employmentType") or ""))[:40],
+        ok=bool(body.strip()),
+        status="ok" if body.strip() else "empty",
+        extraction="workday",
+        source_type="official_career_site",
+    )
+
+
+def _from_smartrecruiters(data: dict) -> ScrapedJob:
+    loc = data.get("location") or {}
+    if isinstance(loc, dict):
+        location = ", ".join(
+            str(loc.get(k) or "").strip()
+            for k in ("city", "region", "country")
+            if loc.get(k)
+        )
+    else:
+        location = str(loc or "")
+    html = str((data.get("jobAd") or {}).get("sections", {}).get("jobDescription", {}).get("text") or "")
+    if not html:
+        html = str(data.get("description") or data.get("jobDescription") or "")
+    body = html_to_text(html) if html else ""
+    company = ""
+    org = data.get("company") or data.get("creator") or {}
+    if isinstance(org, dict):
+        company = str(org.get("name") or "")
+    return ScrapedJob(
+        title=clean_text(str(data.get("name") or data.get("title") or ""))[:200],
+        company=clean_text(company)[:150],
+        location=clean_text(location)[:150],
+        description=body[:20000],
+        employment_type=clean_text(str(data.get("typeOfEmployment") or data.get("employmentType") or ""))[:40],
+        ok=bool(body.strip()),
+        status="ok" if body.strip() else "empty",
+        extraction="smartrecruiters",
+        source_type="official_career_site",
+    )
+
+
+def _from_workable(data: dict) -> ScrapedJob:
+    html = str(data.get("description") or data.get("full_description") or "")
+    body = html_to_text(html) if html else clean_text(str(data.get("shortcode") or ""))
+    loc = data.get("location") or {}
+    location = ""
+    if isinstance(loc, dict):
+        location = ", ".join(
+            str(loc.get(k) or "").strip() for k in ("city", "region", "country") if loc.get(k)
+        )
+        if loc.get("telecommuting") or loc.get("remote"):
+            location = (location + " Remote").strip()
+    return ScrapedJob(
+        title=clean_text(str(data.get("title") or ""))[:200],
+        company=clean_text(str(data.get("department") or ""))[:150],
+        location=clean_text(location)[:150],
+        description=body[:20000],
+        employment_type=clean_text(str(data.get("employment_type") or ""))[:40],
+        ok=len(body) > 40,
+        status="ok" if len(body) > 40 else "empty",
+        extraction="workable",
+        source_type="official_career_site",
+    )
+
+
+def workday_cxs_url(url: str) -> str:
+    """Turn a Workday careers URL into the JSON CXS job endpoint."""
+    parsed = urlparse(url)
+    host = parsed.netloc
+    if "myworkdayjobs.com" not in host and "myworkday.com" not in host:
+        return ""
+    tenant = host.split(".")[0]
+    path = parsed.path or ""
+    match = re.search(r"/(?:[a-z]{2}-[A-Z]{2}/)?([^/]+)/job/(.+)$", path)
+    if not match:
+        return ""
+    site, rest = match.group(1), match.group(2).rstrip("/")
+    if site.lower() in {"wday", "cxs"}:
+        return ""
+    return f"https://{host}/wday/cxs/{tenant}/{site}/job/{rest}"
+
+
+def smartrecruiters_api_url(url: str) -> str:
+    parsed = urlparse(url)
+    parts = [p for p in (parsed.path or "").split("/") if p]
+    if len(parts) < 2:
+        return ""
+    return f"https://api.smartrecruiters.com/v1/companies/{parts[0]}/postings/{parts[-1]}"
+
+
+def workable_api_url(url: str) -> str:
+    match = re.search(r"apply\.workable\.com/([^/]+)/j/([^/]+)", url, re.I)
+    if not match:
+        return ""
+    return f"https://apply.workable.com/api/v2/accounts/{match.group(1)}/jobs/{match.group(2)}"
+
+
+GREENHOUSE_IN_PAGE = re.compile(
+    r"boards(?:-api)?\.greenhouse\.io/(?:v1/boards/)?([a-z0-9_-]+)",
+    re.I,
+)
+
+
+def greenhouse_board_from_html(html: str) -> str:
+    match = GREENHOUSE_IN_PAGE.search(html or "")
+    return (match.group(1) or "").strip() if match else ""
+
+
 def _api_target(candidate: JobCandidate) -> tuple[str, str]:
     """Prefer a board's public JSON API over its JavaScript-heavy HTML page."""
     key, url = candidate.url_key, unwrap_url(candidate.url)
@@ -363,6 +522,25 @@ def _api_target(candidate: JobCandidate) -> tuple[str, str]:
     if key.startswith("lever:"):
         _, company, job_id = key.split(":", 2)
         return LEVER_API.format(company=company, job_id=job_id), "lever"
+    if key.startswith("ashby:"):
+        parts = key.split(":", 2)
+        if len(parts) == 3:
+            return ASHBY_API.format(board=parts[1]), "ashby"
+    if key.startswith("workday:") or "myworkdayjobs.com" in url or "myworkday.com" in url:
+        api = workday_cxs_url(url)
+        if api:
+            return api, "workday"
+    if key.startswith("smartrecruiters:") or "smartrecruiters.com" in url:
+        api = smartrecruiters_api_url(url)
+        if api:
+            return api, "smartrecruiters"
+    if key.startswith("workable:") or "workable.com" in url:
+        api = workable_api_url(url)
+        if api:
+            return api, "workable"
+    if key.startswith("indeed:"):
+        job_id = key.split(":", 1)[1]
+        return f"https://www.indeed.com/viewjob?jk={job_id}", "html"
     return url, "html"
 
 
@@ -385,7 +563,12 @@ def fetch_job(candidate: JobCandidate, timeout: int = 15) -> ScrapedJob:
     original = unwrap_url(candidate.url)
 
     with httpx.Client(headers=HEADERS, timeout=timeout, follow_redirects=True) as client:
-        resp = _get(client, url, HEADERS)
+        req_headers = (
+            {**HEADERS, "Accept": "application/json"}
+            if kind not in {"html", "linkedin"}
+            else HEADERS
+        )
+        resp = _get(client, url, req_headers)
 
         # A dead API shortcut should not cost us the posting: fall back to the original page.
         if kind != "html" and (resp is None or resp.status_code >= 400):
@@ -414,15 +597,40 @@ def fetch_job(candidate: JobCandidate, timeout: int = 15) -> ScrapedJob:
                 job = _from_greenhouse(resp.json())
             elif kind == "lever":
                 job = _from_lever(resp.json())
+            elif kind == "ashby":
+                job_id = candidate.url_key.split(":")[-1] if candidate.url_key.startswith("ashby:") else ""
+                job = _from_ashby(resp.json(), job_id)
+            elif kind == "workday":
+                job = _from_workday(resp.json())
+            elif kind == "smartrecruiters":
+                job = _from_smartrecruiters(resp.json())
+            elif kind == "workable":
+                job = _from_workable(resp.json())
             else:
                 soup = BeautifulSoup(resp.text, "lxml")
                 job = None
                 if kind == "linkedin":
                     job = _from_linkedin(soup)
                 job = job or _from_jsonld(soup) or _from_html(soup)
+                if (not job.ok) and candidate.url_key.startswith("greenhouse:"):
+                    board = greenhouse_board_from_html(resp.text)
+                    if board:
+                        api = GREENHOUSE_API.format(board=board, job_id=candidate.url_key.split(":", 1)[1])
+                        api_resp = _get(client, api, {**HEADERS, "Accept": "application/json"})
+                        if api_resp is not None and api_resp.status_code < 400:
+                            try:
+                                better = _from_greenhouse(api_resp.json())
+                                if better.ok:
+                                    job = better
+                            except Exception:
+                                pass
         except Exception as exc:
             log.info("parse failed for %s: %s", url, exc)
-            return ScrapedJob(status="error", final_url=str(resp.url))
+            if kind != "html" and resp is not None and resp.text.strip():
+                soup = BeautifulSoup(resp.text, "lxml")
+                job = _from_jsonld(soup) or _from_html(soup)
+            else:
+                return ScrapedJob(status="error", final_url=str(resp.url) if resp is not None else url)
 
         job.final_url = str(resp.url)
 

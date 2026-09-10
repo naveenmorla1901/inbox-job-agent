@@ -44,6 +44,17 @@ def test_unrelated_and_student_titles_are_not_worth_scraping():
     assert not title_worth_scraping(PROFILE, "Software Engineer")
 
 
+def test_empty_scrape_lifts_a_strong_title_over_the_threshold():
+    from app.matcher import MatchResult, promote_empty_scrape_match
+
+    thin = MatchResult(score=0.40, title_score=1.0, verdict="title 1.00 / skills 0.00 / resume 0.00")
+    lifted = promote_empty_scrape_match(thin, 0.45, page_ok=False)
+    assert lifted.score == 0.45
+    assert "job page empty" in lifted.verdict
+    ok = MatchResult(score=0.40, title_score=1.0, verdict="x")
+    assert promote_empty_scrape_match(ok, 0.45, page_ok=True).score == 0.40
+
+
 def test_no_sponsorship_posting_is_rejected():
     jd = DS_JD + "\nThis position is not eligible for work authorization sponsorship."
     result = match_job(PROFILE, "Data Scientist", jd, "Remote", "Acme")

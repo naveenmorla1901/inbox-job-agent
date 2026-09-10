@@ -81,6 +81,7 @@
     select { cursor: pointer; }
     button { cursor: pointer; font-weight: 600; }
     button:hover { border-color: var(--faint); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
     .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
     .btn-primary:hover { background: #4338ca; border-color: #4338ca; }
     .btn-ghost { background: var(--surface); }
@@ -131,8 +132,7 @@
     table.compact td { padding: 8px 10px; font-size: 13px; }
 
     /* ---------- Cards / list ---------- */
-    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-      padding: 16px 18px; margin-bottom: 14px; box-shadow: var(--shadow); }
+    .card.danger { border-color: var(--bad-line); }
     .card.hover:hover { box-shadow: var(--shadow-md); border-color: #d7dbe2; }
     .card h3 { font-size: 15.5px; }
     .card h3 a { color: var(--text); }
@@ -187,6 +187,18 @@
     .kpi.accent .n { color: var(--accent); }
     .kpi.good .n { color: var(--good); }
 
+    .funnel { display: grid; gap: 8px; margin-top: 12px; }
+    .funnel-row { display: grid; grid-template-columns: 110px 1fr 42px; gap: 10px; align-items: center; }
+    .funnel-row .bar { height: 10px; background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 999px; overflow: hidden; }
+    .funnel-row .bar > span { display: block; height: 100%; background: var(--accent); }
+    .funnel-row.exit .bar { background: var(--bad-soft); border-color: var(--bad-line); }
+    .funnel-row.exit .bar > span { background: var(--bad); }
+    .chart-row { display: flex; align-items: flex-end; gap: 4px; height: 140px; padding: 8px 0 0; overflow-x: auto; }
+    .chart-col { flex: 1; min-width: 10px; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }
+    .chart-col .bar { width: 100%; max-width: 18px; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
+    .chart-col .bar.jobs { background: var(--good); opacity: .85; }
+    .chart-col .lbl { font-size: 10px; color: var(--faint); margin-top: 4px; white-space: nowrap; }
+
     /* ---------- Day divider ---------- */
     .day-head { color: var(--faint); font-size: 12px; font-weight: 700; letter-spacing: .06em;
       text-transform: uppercase; margin: 26px 0 12px; display: flex; align-items: center; gap: 10px; }
@@ -225,9 +237,13 @@
       </a>
       <a href="/applications" class="{% if request.url.path.startswith('/application') %}active{% endif %}">Applications</a>
       <a href="/overview" class="{% if request.url.path == '/overview' %}active{% endif %}">Overview</a>
+      <a href="/charts" class="{% if request.url.path.startswith('/charts') %}active{% endif %}">Charts</a>
       <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}">Status</a>
       <a href="/issues" class="{% if request.url.path.startswith('/issues') %}active{% endif %}">
         Issues{% if nav_errors %}<span class="count-badge">{{ nav_errors }}</span>{% endif %}
+      </a>
+      <a href="/flags" class="{% if request.url.path.startswith('/flags') %}active{% endif %}">
+        Flags{% if nav_flags %}<span class="count-badge">{{ nav_flags }}</span>{% endif %}
       </a>
     </nav>
     {% if request.url.path != '/login' %}

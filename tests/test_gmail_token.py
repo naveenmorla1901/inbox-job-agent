@@ -6,6 +6,7 @@ import pytest
 from app import config
 from app.gmail_client import (
     gmail_token_present,
+    gmail_token_status,
     host_setup,
     load_credentials,
     read_gmail_token_text,
@@ -18,6 +19,26 @@ def fresh_config():
     config.get_settings.cache_clear()
     yield
     config.get_settings.cache_clear()
+
+
+def test_gmail_token_status_reports_missing_and_refresh(monkeypatch, fresh_config):
+    monkeypatch.delenv("GMAIL_TOKEN_JSON", raising=False)
+    monkeypatch.setenv("GMAIL_TOKEN_FILE", "secrets/does-not-exist.json")
+    missing = gmail_token_status(config.get_settings())
+    assert missing["ok"] is False
+    assert missing["present"] is False
+
+    config.get_settings.cache_clear()
+    monkeypatch.setenv("GMAIL_TOKEN_JSON", '{"refresh_token": "abc", "client_id": "x"}')
+    ok = gmail_token_status(config.get_settings())
+    assert ok["ok"] is True
+    assert ok["refresh"] is True
+
+    config.get_settings.cache_clear()
+    monkeypatch.setenv("GMAIL_TOKEN_JSON", '{"token": "only-access"}')
+    dead = gmail_token_status(config.get_settings())
+    assert dead["ok"] is False
+    assert "refresh_token" in dead["detail"]
 
 
 def test_token_from_inline_json_env(monkeypatch, fresh_config):

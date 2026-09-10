@@ -20,18 +20,18 @@ from .classify import (
 )
 from .config import get_profile, get_settings
 from .db import exists, get_state, init_db, session_scope, set_state
-from .email_parse import ParsedEmail, parse_message
+from .email_parse import Link, ParsedEmail, parse_message
 from .extract_jobs import JobCandidate, extract_from_email
 from .llm_extract import extract_postings
 from .gmail_client import GmailClient
 from .job_fields import enrich_fields, normalize_visa, phone_from_text, scheduling_url_from_links
 from .llm import LLM
-from .matcher import match_job, title_worth_scraping
+from .matcher import match_job, promote_empty_scrape_match, title_worth_scraping
 from .issues import record_issue
-from .models import Application, ApplicationEvent, Job, Message, Outreach, PollRun
+from .models import Application, ApplicationEvent, Issue, Job, Message, Outreach, PollRun
 from .notify import Notifier
 from .schedule import next_tick_epoch, tick_window
-from .scrape import SHELL_TITLE, ScrapedJob, fetch_all, llm_extract
+from .scrape import SHELL_TITLE, ScrapedJob, fetch_all, fetch_job, llm_extract
 from .timefmt import fmt_et
 
 log = logging.getLogger(__name__)
@@ -227,6 +227,95 @@ def clear_inbox(session: Session, *, from_now: bool = True) -> dict[str, int]:
         session.flush()
     if from_now:
         set_state(session, STATE_CURSOR, str(int(datetime.now(timezone.utc).timestamp())))
+    session.commit()
+    return counts
+
+
+def _uniq(rows) -> list:
+    seen: set[int | str] = set()
+    out = []
+    for row in rows:
+        key = getattr(row, "id", None)
+        if key is None or key in seen:
+            if key is None:
+                out.append(row)
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def count_purge_window(session: Session, start: datetime, end: datetime) -> dict[str, int]:
+    """How many stored rows a window delete would remove. Gmail is not touched."""
+    return _purge_window(session, start, end, apply=False)
+
+
+def purge_window(session: Session, start: datetime, end: datetime) -> dict[str, int]:
+    """Delete stored mail, matches, scrapes, issues, and extract logs in [start, end).
+
+    Gmail itself is not touched. Open applications stay; their job link is cleared
+    if that posting is removed.
+    """
+    return _purge_window(session, start, end, apply=True)
+
+
+def _purge_window(session: Session, start: datetime, end: datetime, *, apply: bool) -> dict[str, int]:
+    messages = list(
+        session.exec(select(Message).where(Message.received_at >= start, Message.received_at < end)).all()
+    )
+    mail_ids = [row.id for row in messages]
+    jobs = list(session.exec(select(Job).where(Job.received_at >= start, Job.received_at < end)).all())
+    if mail_ids:
+        jobs.extend(session.exec(select(Job).where(col(Job.message_id).in_(mail_ids))).all())
+    jobs = _uniq(jobs)
+    job_ids = [row.id for row in jobs if row.id is not None]
+
+    outreach = list(
+        session.exec(select(Outreach).where(Outreach.received_at >= start, Outreach.received_at < end)).all()
+    )
+    if mail_ids:
+        outreach.extend(session.exec(select(Outreach).where(col(Outreach.message_id).in_(mail_ids))).all())
+    outreach = _uniq(outreach)
+
+    events = list(
+        session.exec(
+            select(ApplicationEvent).where(
+                ApplicationEvent.occurred_at >= start, ApplicationEvent.occurred_at < end
+            )
+        ).all()
+    )
+    if mail_ids:
+        events.extend(
+            session.exec(select(ApplicationEvent).where(col(ApplicationEvent.message_id).in_(mail_ids))).all()
+        )
+    events = _uniq(events)
+
+    issues = list(
+        session.exec(select(Issue).where(Issue.occurred_at >= start, Issue.occurred_at < end)).all()
+    )
+    runs = list(
+        session.exec(select(PollRun).where(PollRun.started_at >= start, PollRun.started_at < end)).all()
+    )
+
+    counts = {
+        "messages": len(messages),
+        "jobs": len(jobs),
+        "outreach": len(outreach),
+        "events": len(events),
+        "issues": len(issues),
+        "runs": len(runs),
+    }
+    if not apply:
+        return counts
+
+    if job_ids:
+        for app in session.exec(select(Application).where(col(Application.job_id).in_(job_ids))).all():
+            app.job_id = None
+            session.add(app)
+        session.flush()
+
+    for row in events + outreach + jobs + messages + issues + runs:
+        session.delete(row)
     session.commit()
     return counts
 
@@ -450,6 +539,7 @@ def _store_jobs(
         )
 
         result = match_job(profile, title, description, location, company)
+        result = promote_empty_scrape_match(result, settings.min_job_score, page.ok)
         if not worth and not result.rejected:
             result.verdict = "not related — skipped job page"
         is_match = not result.rejected and result.score >= settings.min_job_score
@@ -587,6 +677,7 @@ def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult
             if settings.scrape_job_pages
             else {}
         )
+        _note_scrape_problems(scraped, email.id)
         jobs = _store_jobs(session, email, candidates, scraped, llm)
     if result.is_tracked:
         # Acknowledgements and rejections belong to the application timeline only; the
@@ -621,6 +712,20 @@ def _should_store_jobs(result: Classification, candidates: list[JobCandidate]) -
         sources = {c.source for c in candidates if c.source}
         return bool(sources)
     return False
+
+
+def _note_scrape_problems(scraped: dict, message_id: str) -> None:
+    bad = [page for page in scraped.values() if getattr(page, "status", "") in {"error", "blocked"}]
+    if not bad:
+        return
+    statuses = sorted({page.status for page in bad})
+    record_issue(
+        "scrape",
+        f"Job page fetch {', '.join(statuses)} ({len(bad)} link(s))",
+        "\n".join(f"{page.status}: {getattr(page, 'url', '')}" for page in bad[:8]),
+        severity="warn" if statuses == ["blocked"] else "error",
+        message_id=message_id,
+    )
 
 
 def reclassify_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult:
@@ -699,6 +804,7 @@ def reextract_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResu
             if settings.scrape_job_pages
             else {}
         )
+        _note_scrape_problems(scraped, email.id)
         jobs = _store_jobs(session, email, candidates, scraped, llm)
     if record is not None:
         record.jobs_matched = sum(1 for job in jobs if job.matched)
@@ -708,6 +814,134 @@ def reextract_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResu
         jobs=jobs,
         jobs_found=len(candidates),
     )
+
+
+def email_from_message(record: Message) -> ParsedEmail:
+    """Rebuild enough of the original email to re-extract without calling Gmail."""
+    payload = parse_extract_payload(record.extract_json)
+    links: list[Link] = []
+    html_bits: list[str] = []
+    for item in payload:
+        url = str(item.get("url") or "").strip()
+        title = str(item.get("title") or "job")
+        if not url:
+            continue
+        links.append(Link(url=url, text=title))
+        extra = " ".join(str(item.get(k) or "") for k in ("company", "location") if item.get(k))
+        html_bits.append(f'<a href="{url}">{title}</a> {extra}'.strip())
+    return ParsedEmail(
+        id=record.id,
+        thread_id=record.thread_id or "",
+        sender_name=record.sender or "",
+        sender_email=record.sender_email or "",
+        subject=record.subject or "",
+        snippet=record.snippet or "",
+        received_at=record.received_at,
+        text=record.body_text or record.snippet or "",
+        html="\n".join(html_bits),
+        links=links,
+    )
+
+
+def apply_page_to_job(
+    session: Session,
+    job: Job,
+    page: ScrapedJob,
+    candidate: JobCandidate,
+    llm: LLM | None = None,
+) -> Job:
+    settings = get_settings()
+    profile = get_profile()
+    if not page.ok:
+        fallback_text = "\n".join(
+            filter(
+                None,
+                [candidate.title, candidate.company, candidate.location, candidate.context, page.description, job.description],
+            )
+        )
+        rescued = llm_extract(fallback_text, llm, candidate)
+        if rescued is not None:
+            page = rescued
+    title = page.title or candidate.title or job.title
+    company = page.company or candidate.company or job.company
+    location = page.location or candidate.location or job.location
+    description = page.description or candidate.context or job.description
+    if not page.ok:
+        title = candidate.title or job.title or page.title
+        company = candidate.company or job.company or page.company
+        location = candidate.location or job.location or page.location
+        description = candidate.context or job.description
+    extra_skills = [s.name for s in profile.skills]
+    fields = enrich_fields(
+        source=candidate.source or job.source,
+        url=candidate.url or job.url,
+        url_key=candidate.url_key or job.url_key,
+        location=location,
+        description=description,
+        extra_skills=extra_skills,
+    )
+    result = match_job(profile, title, description, location, company)
+    result = promote_empty_scrape_match(result, settings.min_job_score, page.ok)
+    is_match = not result.rejected and result.score >= settings.min_job_score
+    job.title = (title or "")[:200]
+    job.company = (company or "")[:150]
+    job.location = (location or "")[:150]
+    job.description = (description or "")[:20000]
+    job.source_type = page.source_type or fields.source_type or job.source_type
+    job.posting_id = (page.posting_id or fields.posting_id or job.posting_id)[:120]
+    job.posted_at = (page.posted_at or fields.posted_at or job.posted_at)[:32]
+    job.state = (page.state or fields.state or job.state)[:20]
+    job.employment_type = (page.employment_type or fields.employment_type or job.employment_type)[:40]
+    job.salary = (page.salary or fields.salary or job.salary)[:80]
+    job.visa_sponsorship = normalize_visa(
+        page.visa_sponsorship or fields.visa_sponsorship, description
+    )[:80]
+    job.experience_required = (page.experience_required or fields.experience_required or job.experience_required)[:80]
+    job.required_skills = (page.required_skills or fields.required_skills or job.required_skills)[:400]
+    job.score = result.score
+    job.title_score = result.title_score
+    job.skill_score = result.skill_score
+    job.resume_score = result.resume_score
+    job.matched_skills = ", ".join(result.matched_skills)[:500]
+    job.missing_skills = ", ".join(result.missing_skills)[:500]
+    job.verdict = result.verdict[:300]
+    job.scraped = page.ok
+    job.scrape_status = page.status
+    job.extraction = page.extraction or job.extraction
+    job.matched = is_match
+    if is_match and job.status == "ignored":
+        job.status = "new"
+    elif not is_match and job.status == "new":
+        job.status = "ignored"
+    session.add(job)
+    return job
+
+
+def rescrape_job(session: Session, job_id: int, llm: LLM | None = None) -> Job | None:
+    """Fetch one stored posting again and rematch it against the profile."""
+    job = session.get(Job, job_id)
+    if job is None:
+        return None
+    if job.duplicate_of:
+        original = session.get(Job, job.duplicate_of)
+        if original is not None:
+            job = original
+    if not (job.url or "").strip():
+        return job
+    settings = get_settings()
+    llm = llm or LLM(settings)
+    key = (job.url_key or "").split("@", 1)[0]
+    candidate = JobCandidate(
+        url=job.url,
+        url_key=key,
+        title=job.title,
+        company=job.company,
+        location=job.location,
+        source=job.source,
+        context=(job.description or "")[:600],
+    )
+    page = fetch_job(candidate, timeout=settings.scrape_timeout)
+    return apply_page_to_job(session, job, page, candidate, llm)
 
 
 def run_once(

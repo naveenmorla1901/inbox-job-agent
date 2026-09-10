@@ -5,7 +5,7 @@ from app import db, pipeline
 from app.config import get_settings
 from app.email_parse import ParsedEmail, extract_links
 from app.llm import LLM
-from app.models import Job, Message, Outreach
+from app.models import Application, Issue, Job, Message, Outreach
 from app.reporting import build_breakdown
 from tests.test_extract import alert_email
 from tests.test_classify import email as plain_email
@@ -232,6 +232,36 @@ def test_refresh_demotes_a_receipt_off_follow_ups(session):
     assert session.exec(select(Outreach)).one().kind == "application_update"
 
 
+def test_purge_window_drops_only_that_range(session):
+    from datetime import datetime, timezone
+
+    inside = datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc)
+    outside = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    session.add(Message(id="keep", subject="old", received_at=outside))
+    session.add(Message(id="drop", subject="new", received_at=inside))
+    session.commit()
+    session.add(Job(message_id="keep", url_key="keep-1", title="Old", received_at=outside))
+    session.add(Job(message_id="drop", url_key="drop-1", title="New", received_at=inside))
+    session.commit()
+    job = session.exec(select(Job).where(Job.url_key == "drop-1")).one()
+    session.add(Application(company="Acme", role="DS", job_id=job.id))
+    session.add(Issue(source="llm", title="quota", occurred_at=inside))
+    session.add(Issue(source="gmail", title="old token", occurred_at=outside))
+    session.commit()
+
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 11, tzinfo=timezone.utc)
+    counts = pipeline.purge_window(session, start, end)
+    assert counts["messages"] == 1
+    assert counts["jobs"] == 1
+    assert counts["issues"] == 1
+    assert session.get(Message, "keep") is not None
+    assert session.get(Message, "drop") is None
+    app_row = session.exec(select(Application)).one()
+    assert app_row.job_id is None
+    assert session.exec(select(Issue).where(Issue.title == "old token")).first() is not None
+
+
 def test_clear_inbox_keeps_only_future_mail(session):
     pipeline.process_email(session, alert_email(), LLM())
     session.commit()
@@ -286,3 +316,19 @@ def test_process_email_stores_raw_extract_payload(session):
     assert payload
     titles = {item.get("title") for item in payload}
     assert "Data Scientist" in titles or "Machine Learning Engineer" in titles
+
+
+def test_empty_job_page_still_matches_a_target_title(session, monkeypatch):
+    from app.scrape import ScrapedJob
+
+    monkeypatch.setattr(get_settings(), "scrape_job_pages", True, raising=False)
+
+    def fake_fetch_all(candidates, timeout=15, workers=5):
+        return {item.url_key: ScrapedJob(status="empty") for item in candidates}
+
+    monkeypatch.setattr(pipeline, "fetch_all", fake_fetch_all)
+    outcome = pipeline.process_email(session, alert_email(), LLM())
+    session.commit()
+    ds = next(job for job in outcome.jobs if "Data Scientist" in (job.title or ""))
+    assert ds.scrape_status == "empty"
+    assert ds.matched

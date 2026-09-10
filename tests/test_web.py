@@ -4,14 +4,14 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, func, select
 
 from app import db
 from app.config import get_settings
 from app.gmail_client import parse_gmail_push
 from app.llm import LLM
 from app.main import app
-from app.models import Job, Message
+from app.models import Issue, Job, Message
 from app.pipeline import STATE_CURSOR, process_email
 from app.timefmt import et_day_label, group_by_et_day
 from tests.test_extract import alert_email
@@ -98,11 +98,55 @@ def test_issues_page_lists_recorded_failures(client):
 
     test_client, _engine = client
     record_issue("gmail", "Gmail list failed", "429 quota", severity="error")
+    record_issue("llm", "No LLM answered extract", "tried groq, gemini", severity="error")
     response = test_client.get("/issues")
     assert response.status_code == 200
-    assert b"Gmail list failed" in response.content
-    assert b"429 quota" in response.content
-    assert b"gmail" in response.content
+    body = response.content
+    assert b"Gmail list failed" in body
+    assert b"429 quota" in body
+    assert b"gmail" in body
+    assert b"Live APIs" in body
+    assert b"No LLM answered extract" in body
+    assert b"LLM" in body
+    assert b"LLM_PROVIDER=none" in body
+
+
+def test_overview_purge_deletes_only_the_selected_window(client):
+    from datetime import datetime, timezone
+
+    test_client, engine = client
+    inside = datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc)
+    outside = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    with Session(engine) as session:
+        session.add(Message(id="keep", subject="old", received_at=outside))
+        session.add(Message(id="drop", subject="new", received_at=inside))
+        session.commit()
+        session.add(Job(message_id="keep", url_key="keep-1", title="Old", received_at=outside))
+        session.add(Job(message_id="drop", url_key="drop-1", title="New", received_at=inside))
+        session.add(Issue(source="gmail", title="old fail", occurred_at=outside))
+        session.add(Issue(source="llm", title="new fail", occurred_at=inside))
+        session.commit()
+
+    page = test_client.get("/overview?since=2026-09-10&until=2026-09-10")
+    assert page.status_code == 200
+    assert b"Delete this window" in page.content
+    assert b"1 emails" in page.content
+
+    response = test_client.post(
+        "/overview/purge",
+        data={"days": 1, "since": "2026-09-10", "until": "2026-09-10"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "flash=" in response.headers["location"]
+
+    with Session(engine) as session:
+        assert session.get(Message, "keep") is not None
+        assert session.get(Message, "drop") is None
+        assert session.exec(select(Job).where(Job.url_key == "keep-1")).first() is not None
+        assert session.exec(select(Job).where(Job.url_key == "drop-1")).first() is None
+        assert session.exec(select(Issue).where(Issue.title == "old fail")).first() is not None
+        assert session.exec(select(Issue).where(Issue.title == "new fail")).first() is None
 
 
 def test_matches_page_groups_by_day_and_shows_source_mail(client):
@@ -165,3 +209,59 @@ def test_group_by_et_day_keeps_order():
     assert [label for label, _ in groups][0] == et_day_label(a.received_at)
     assert len(groups[0][1]) == 2
     assert len(groups[1][1]) == 1
+
+
+def test_flag_and_flags_page(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        process_email(session, alert_email(), LLM())
+        session.commit()
+
+    flagged = test_client.post(
+        "/mail/m1/flag",
+        data={"category": "recruiter_outreach", "redirect": "/?m=m1&days=30"},
+        follow_redirects=False,
+    )
+    assert flagged.status_code == 303
+    page = test_client.get("/flags")
+    assert page.status_code == 200
+    assert b"recruiter" in page.content.lower()
+    mail = test_client.get("/?m=m1&days=30")
+    assert b"Re-extract this email" in mail.content
+    assert b"Wrong category" in mail.content
+
+
+def test_charts_and_overview_funnel_pages(client):
+    test_client, _engine = client
+    charts = test_client.get("/charts")
+    assert charts.status_code == 200
+    assert b"Fetched per extract window" in charts.content
+    overview = test_client.get("/overview?days=30")
+    assert overview.status_code == 200
+    assert b"Application funnel" in overview.content
+    assert b"Search applications" in overview.content
+    issues = test_client.get("/issues")
+    assert b"Probe APIs" in issues.content
+    apps = test_client.get("/applications")
+    assert apps.status_code == 200
+    flags = test_client.get("/flags")
+    assert flags.status_code == 200
+    assert b"Wrong-category flags" in flags.content
+
+
+def test_reextract_this_email_rewrites_jobs(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        process_email(session, alert_email(), LLM())
+        session.commit()
+        before = session.exec(select(func.count()).select_from(Job)).one()
+
+    response = test_client.post(
+        "/mail/m1/reextract",
+        data={"redirect": "/?m=m1&days=30"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with Session(engine) as session:
+        after = session.exec(select(func.count()).select_from(Job)).one()
+    assert after == before

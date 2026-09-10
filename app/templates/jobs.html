@@ -79,6 +79,9 @@
         {% if job.visa_sponsorship %}<span class="tag warn">{{ job.visa_sponsorship }}</span>{% endif %}
         {% if job.duplicate_of %}<span class="tag">repeat of #{{ job.duplicate_of }}</span>{% endif %}
         {% if not job.matched %}<span class="tag">below threshold</span>{% endif %}
+        {% if job.scrape_status and job.scrape_status != 'ok' %}
+        <span class="tag {% if job.scrape_status == 'blocked' %}warn{% elif job.scrape_status == 'empty' %}warn{% endif %}">fetch {{ job.scrape_status }}</span>
+        {% endif %}
       </div>
       {% if mail %}
       <div class="meta" style="margin-top:4px">from <a class="muted-link" href="/?days={{ days }}">{{ mail.subject[:80] or "(no subject)" }}</a> · {{ mail.sender }}</div>
@@ -97,6 +100,12 @@
   </div>
   <div class="actions">
     <a class="tag" href="{{ job.url }}" target="_blank" rel="noopener">Open posting →</a>
+    {% if job.url and job.scrape_status in ('empty', 'blocked', 'error') %}
+    <form method="post" action="/job/{{ job.id }}/rescrape">
+      <input type="hidden" name="redirect" value="{{ request.url.path }}?{{ request.url.query }}">
+      <button type="submit" class="btn-sm">Retry fetch</button>
+    </form>
+    {% endif %}
     <a class="tag" href="https://mail.google.com/mail/u/0/#inbox/{{ job.message_id }}" target="_blank" rel="noopener">Open mail</a>
     <span class="divider"></span>
     <span class="tag {% if job.status != 'new' %}accent{% endif %}">{{ job.status|title }}</span>

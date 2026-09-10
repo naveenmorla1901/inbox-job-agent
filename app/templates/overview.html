@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Overview — Inbox Job Agent{% endblock %}
 {% block content %}
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
 <div class="page-head">
   <div>
     <h1>Overview</h1>
@@ -19,6 +20,7 @@
   </div>
   <div class="field"><label>From</label><input type="date" name="since" value="{{ since }}"></div>
   <div class="field"><label>To</label><input type="date" name="until" value="{{ until }}"></div>
+  {% if app_q %}<input type="hidden" name="app_q" value="{{ app_q }}">{% endif %}
   <div class="actions"><button type="submit" class="btn-primary">Apply range</button></div>
 </form>
 
@@ -89,4 +91,86 @@
   </table>
 </div>
 {% endif %}
+
+<div class="card">
+  <h3>Application funnel</h3>
+  <p class="lede">Every application touched in this window — search by company or role. Rates are among the rows in this filter, not all-time.</p>
+  <form class="toolbar" method="get" action="/overview" style="margin:12px 0 0; box-shadow:none">
+    <input type="hidden" name="days" value="{{ days }}">
+    <input type="hidden" name="since" value="{{ since }}">
+    <input type="hidden" name="until" value="{{ until }}">
+    <div class="field grow">
+      <label>Search applications</label>
+      <input type="search" name="app_q" value="{{ app_q }}" placeholder="Company, role, or status…">
+    </div>
+    <div class="actions">
+      <button type="submit" class="btn-primary">Search</button>
+      {% if app_q %}<a class="tag" href="/overview?days={{ days }}{% if since %}&since={{ since }}{% endif %}{% if until %}&until={{ until }}{% endif %}">Clear</a>{% endif %}
+    </div>
+  </form>
+  <div class="kpis" style="margin-top:14px">
+    <div class="kpi"><div class="n">{{ funnel.total }}</div><div class="l">In this filter</div></div>
+    <div class="kpi good"><div class="n">{{ "%.0f"|format(funnel.interview_rate * 100) }}%</div><div class="l">Interview or offer</div></div>
+    <div class="kpi"><div class="n">{{ "%.0f"|format(funnel.offer_rate * 100) }}%</div><div class="l">Offer rate</div></div>
+  </div>
+  <div class="funnel">
+    {% for status, count in funnel.stages %}
+    <div class="funnel-row">
+      <div>{{ status.replace("_", " ")|title }}</div>
+      <div class="bar"><span style="width: {{ (count / funnel.peak * 100) if funnel.peak else 0 }}%"></span></div>
+      <div><b>{{ count }}</b></div>
+    </div>
+    {% endfor %}
+    {% for status, count in funnel.exits %}
+    <div class="funnel-row exit">
+      <div>{{ status.replace("_", " ")|title }}</div>
+      <div class="bar"><span style="width: {{ (count / funnel.peak * 100) if funnel.peak else 0 }}%"></span></div>
+      <div><b>{{ count }}</b></div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if funnel.rows %}
+  <table class="compact" style="margin-top:14px">
+    <thead><tr><th>Role</th><th>Company</th><th>Status</th><th>Updated</th></tr></thead>
+    <tbody>
+    {% for application in funnel.rows %}
+    <tr>
+      <td>{% if application.job_url %}<a href="{{ application.job_url }}" target="_blank" rel="noopener">{{ application.role or "Role unknown" }}</a>{% else %}{{ application.role or "Role unknown" }}{% endif %}</td>
+      <td>{{ application.company }}</td>
+      <td><span class="tag {% if application.status in ('interview', 'offer', 'next_step') %}good{% elif application.status == 'rejected' %}bad{% endif %}">{{ application.status.replace("_", " ")|title }}</span></td>
+      <td class="mono">{{ application.last_event_at | et("%b %d") }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <div class="actions"><a class="tag accent" href="/applications">Open full tracker →</a></div>
+  {% else %}
+  <p class="lede">No applications in this window{% if app_q %} match “{{ app_q }}”{% endif %}.</p>
+  {% endif %}
+</div>
+
+<div class="card danger">
+  <h3>Delete stored data in this window</h3>
+  <p class="lede">
+    Uses the From / To range above (click <b>Apply range</b> first). Removes stored emails, extracted
+    postings, scrapes, follow-ups, extract logs, and issues for
+    <b>{{ report.window_label }}</b>. Application tracker rows stay. Gmail itself is not touched,
+    and this cannot be undone. Next poll still skips mail from before origin, so deleted emails
+    will not come back unless you reset origin on Status.
+  </p>
+  <div class="tags mt">
+    <span class="tag">{{ purge_counts.messages }} emails</span>
+    <span class="tag">{{ purge_counts.jobs }} postings</span>
+    <span class="tag">{{ purge_counts.outreach }} follow-ups</span>
+    <span class="tag">{{ purge_counts.issues }} issues</span>
+    <span class="tag">{{ purge_counts.runs }} extract runs</span>
+    <span class="tag">{{ purge_counts.events }} application events</span>
+  </div>
+  <form method="post" action="/overview/purge" class="actions" onsubmit="return confirm('Delete stored emails, matches, scrapes, and issues for {{ report.window_label }}? Gmail itself is not touched. This cannot be undone.');">
+    <input type="hidden" name="days" value="{{ days }}">
+    <input type="hidden" name="since" value="{{ since }}">
+    <input type="hidden" name="until" value="{{ until }}">
+    <button type="submit" class="btn-danger" {% if not purge_total %}disabled{% endif %}>Delete this window</button>
+  </form>
+</div>
 {% endblock %}

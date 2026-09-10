@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Charts — Inbox Job Agent{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Charts</h1>
+    <div class="sub">How much mail each 15-minute extract actually fetched. Empty bars mean the window ran and found nothing new.</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Fetched per extract window</h3>
+  {% if not runs %}
+  <p class="lede">No extract windows recorded yet.</p>
+  {% else %}
+  <div class="chart-row" title="Each column is one 15-minute poll. Height is emails fetched.">
+    {% for run in runs %}
+    <div class="chart-col" title="{{ run.started_at | et('%b %d %I:%M %p') }} · fetched {{ run.fetched }} · new {{ run.processed }} · jobs {{ run.jobs_found }}">
+      <div class="bar" style="height: {{ ((run.fetched or 0) / max_fetched * 100) if max_fetched else 0 }}%"></div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="meta" style="margin-top:8px">Height = emails fetched. Hover a column for the timestamp.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Jobs found per extract window</h3>
+  {% if not runs %}
+  <p class="lede">No extract windows recorded yet.</p>
+  {% else %}
+  <div class="chart-row">
+    {% for run in runs %}
+    <div class="chart-col" title="{{ run.started_at | et('%b %d %I:%M %p') }} · {{ run.jobs_matched }}/{{ run.jobs_found }} jobs">
+      <div class="bar jobs" style="height: {{ ((run.jobs_found or 0) / max_jobs * 100) if max_jobs else 0 }}%"></div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>By day (US Eastern)</h3>
+  {% if not days %}
+  <p class="lede">Nothing to roll up yet.</p>
+  {% else %}
+  <table class="compact">
+    <thead>
+      <tr>
+        <th>Day</th>
+        <th>Windows</th>
+        <th>Fetched</th>
+        <th>Analyzed</th>
+        <th>Jobs</th>
+        <th>Errors</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for label, row in days %}
+    <tr>
+      <td>{{ label }}</td>
+      <td>{{ row.runs }}</td>
+      <td><b>{{ row.fetched }}</b></td>
+      <td>{{ row.processed }}</td>
+      <td>{{ row.jobs_matched }}/{{ row.jobs_found }}</td>
+      <td>{% if row.errors %}<span class="tag bad">{{ row.errors }}</span>{% else %}0{% endif %}</td>
+      <td>
+        <div class="bar" style="height:8px; background:var(--accent-soft); border-radius:999px; overflow:hidden">
+          <span style="display:block; height:100%; width: {{ (row.fetched / day_max * 100) if day_max else 0 }}%; background:var(--accent)"></span>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

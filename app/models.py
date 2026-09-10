@@ -34,6 +34,8 @@ class Message(SQLModel, table=True):
     body_text: str = Field(default="", sa_column=Column(Text))  # plain text for raw-extract compare
     extract_json: str = Field(default="", sa_column=Column(Text))  # candidates pulled from this mail
     processed_at: datetime = Field(default_factory=utcnow)
+    flagged_category: str = ""  # what the user says this mail actually is
+    flagged_at: datetime | None = None
 
 
 class Job(SQLModel, table=True):

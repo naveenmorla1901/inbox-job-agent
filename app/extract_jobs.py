@@ -420,6 +420,30 @@ def canonical_key(url: str) -> str:
         m = re.search(r"/([^/]+)/([0-9a-f-]{20,})", path)
         if m:
             return f"lever:{m.group(1)}:{m.group(2)}"
+    if source == "ashby":
+        jid = (params.get("ashby_jid") or params.get("ashbyId") or [""])[0]
+        board = path.strip("/").split("/")[0] if path.strip("/") else ""
+        if jid and board:
+            return f"ashby:{board}:{jid}"
+        m = re.search(
+            r"/([^/]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+            path,
+            re.I,
+        )
+        if m:
+            return f"ashby:{m.group(1)}:{m.group(2)}"
+    if source == "workday":
+        m = re.search(r"/job/(.+)$", path, re.I)
+        if m:
+            return f"workday:{host}:{m.group(1).rstrip('/')}"
+    if source == "smartrecruiters":
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 2:
+            return f"smartrecruiters:{parts[0]}:{parts[-1]}"
+    if source == "workable":
+        m = re.search(r"/([^/]+)/j/([^/]+)", path, re.I)
+        if m:
+            return f"workable:{m.group(1)}:{m.group(2)}"
     if source == "adzuna":
         m = re.search(r"/(\d{5,})", path)
         if m:
