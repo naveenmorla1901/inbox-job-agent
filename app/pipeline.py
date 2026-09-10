@@ -28,14 +28,18 @@ from .llm import LLM
 from .matcher import match_job, title_worth_scraping
 from .models import Application, ApplicationEvent, Job, Message, Outreach
 from .notify import Notifier
+from .schedule import next_slot_end, slot_floor, slot_window
 from .scrape import SHELL_TITLE, ScrapedJob, fetch_all, llm_extract
+from .timefmt import fmt_et
 
 log = logging.getLogger(__name__)
 
 STATE_CURSOR = "last_poll_epoch"
 STATE_WATCH = "gmail_watch_expiration"
 STATE_LAST_RUN = "last_run_json"
+STATE_POLL = "poll_progress"
 OVERLAP_SECONDS = 300
+BODY_STORE_CHARS = 40000
 
 
 @dataclass
@@ -56,15 +60,30 @@ class RunStats:
     emails: list[dict] = field(default_factory=list)
     started_at: str = ""
     duration_s: float = 0.0
+    window_start: int = 0
+    window_end: int = 0
 
     def as_dict(self) -> dict:
         return asdict(self)
 
 
-def build_query(session: Session, since_days: int | None = None, override: str = "") -> str:
+def build_query(
+    session: Session,
+    since_days: int | None = None,
+    override: str = "",
+    after_epoch: int | None = None,
+    before_epoch: int | None = None,
+) -> str:
     settings = get_settings()
     if override:
         return override
+    parts = [settings.gmail_query.strip()]
+    if after_epoch is not None:
+        # Gmail `after:` is exclusive of that second; step back so 6:00:00 is in 6:00–6:15.
+        parts.append(f"after:{max(0, int(after_epoch) - 1)}")
+        if before_epoch is not None:
+            parts.append(f"before:{int(before_epoch)}")
+        return " ".join(p for p in parts if p)
     if since_days is not None:
         after = int((datetime.now(timezone.utc) - timedelta(days=since_days)).timestamp())
     else:
@@ -74,7 +93,67 @@ def build_query(session: Session, since_days: int | None = None, override: str =
         else:
             lookback = timedelta(days=settings.gmail_initial_lookback_days)
             after = int((datetime.now(timezone.utc) - lookback).timestamp())
-    return f"{settings.gmail_query} after:{after}".strip()
+    parts.append(f"after:{after}")
+    return " ".join(p for p in parts if p)
+
+
+def plant_poll_cursor(
+    session: Session, when: datetime | None = None, interval_s: int | None = None
+) -> int:
+    """Drop a stale cursor so auto-sync never backfills mail from before this slot.
+
+    Start at 6:03 plants 6:00. The 6:15 run then covers 6:00–6:15 only.
+    A cursor already inside the current slot is left alone.
+    """
+    interval = max(60, interval_s or get_settings().poll_interval_seconds)
+    floor = slot_floor(when, interval)
+    raw = get_state(session, STATE_CURSOR)
+    try:
+        current = int(raw) if raw else 0
+    except ValueError:
+        current = 0
+    if current < floor:
+        set_state(session, STATE_CURSOR, str(floor))
+        return floor
+    return current
+
+
+def set_poll_progress(session: Session, **fields) -> None:
+    set_state(session, STATE_POLL, json.dumps(fields))
+
+
+def load_poll_progress(session: Session) -> dict:
+    raw = get_state(session, STATE_POLL)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def parse_extract_payload(raw: str) -> list[dict]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        rows = data.get("candidates") or []
+        return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _extract_blob(email: ParsedEmail, candidates: list[JobCandidate]) -> tuple[str, str]:
+    payload = {
+        "candidates": [asdict(item) for item in candidates],
+        "link_count": len(email.links),
+    }
+    return email.body(BODY_STORE_CHARS), json.dumps(payload, ensure_ascii=False)
 
 
 def clear_inbox(session: Session, *, from_now: bool = True) -> dict[str, int]:
@@ -161,6 +240,8 @@ def remember_run(session: Session, stats: RunStats) -> None:
         "jobs_matched": stats.jobs_matched,
         "errors": stats.errors[:20],
         "emails": stats.emails[:80],
+        "window_start": stats.window_start,
+        "window_end": stats.window_end,
     }
     set_state(session, STATE_LAST_RUN, json.dumps(payload))
 
@@ -398,6 +479,7 @@ def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult
 
     # The message row has to land before anything referencing it: the dedupe lookups below
     # autoflush pending jobs mid-loop, and Postgres enforces the foreign key SQLite ignored.
+    body_text, extract_json = _extract_blob(email, candidates)
     record = Message(
         id=email.id,
         thread_id=email.thread_id,
@@ -412,6 +494,8 @@ def process_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResult
         summary=result.summary[:1000],
         jobs_found=len(candidates),
         email_type=result.email_type,
+        body_text=body_text,
+        extract_json=extract_json,
     )
     session.add(record)
     session.flush()
@@ -522,6 +606,7 @@ def reextract_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResu
         record.summary = result.summary[:1000]
         record.email_type = result.email_type
         record.jobs_found = len(candidates)
+        record.body_text, record.extract_json = _extract_blob(email, candidates)
         session.add(record)
 
     for job in session.exec(select(Job).where(Job.message_id == email.id)).all():
@@ -558,9 +643,15 @@ def run_once(
     query: str = "",
     reclassify: bool = False,
     reextract: bool = False,
+    after_epoch: int | None = None,
+    before_epoch: int | None = None,
 ) -> RunStats:
     started = time.time()
-    stats = RunStats(started_at=datetime.now(timezone.utc).isoformat())
+    stats = RunStats(
+        started_at=datetime.now(timezone.utc).isoformat(),
+        window_start=int(after_epoch or 0),
+        window_end=int(before_epoch or 0),
+    )
     settings = get_settings()
     init_db()
 
@@ -572,19 +663,45 @@ def run_once(
     latest_epoch = 0
 
     with session_scope() as session:
-        search = build_query(session, since_days=since_days, override=query)
+        search = build_query(
+            session,
+            since_days=since_days,
+            override=query,
+            after_epoch=after_epoch,
+            before_epoch=before_epoch,
+        )
         limit = max_messages or settings.gmail_max_results
         message_ids = gmail.list_message_ids(search, limit)
         stats.fetched = len(message_ids)
         log.info("query=%r -> %d message(s)", search, len(message_ids))
+        set_poll_progress(
+            session,
+            status="running",
+            index=0,
+            total=len(message_ids),
+            subject="",
+            window_start=after_epoch or 0,
+            window_end=before_epoch or 0,
+        )
+        session.commit()
 
-        for message_id in message_ids:
+        for step, message_id in enumerate(message_ids, start=1):
             already = session.get(Message, message_id)
             if already and not reclassify and not reextract:
                 stats.skipped += 1
                 continue
             try:
                 email = parse_message(gmail.get_message(message_id))
+                set_poll_progress(
+                    session,
+                    status="running",
+                    index=step,
+                    total=len(message_ids),
+                    subject=(email.subject or "")[:120],
+                    window_start=after_epoch or 0,
+                    window_end=before_epoch or 0,
+                )
+                log.info("extract %d/%d %s", step, len(message_ids), message_id)
                 if already and reextract:
                     outcome = reextract_email(session, email, llm)
                 elif already:
@@ -640,8 +757,19 @@ def run_once(
         if new_jobs and settings.notify_on_jobs and notifier.jobs(new_jobs):
             stats.notified += 1
 
-        if latest_epoch:
+        if before_epoch:
+            set_state(session, STATE_CURSOR, str(int(before_epoch)))
+        elif latest_epoch:
             set_state(session, STATE_CURSOR, str(latest_epoch))
+        set_poll_progress(
+            session,
+            status="idle",
+            index=len(message_ids),
+            total=len(message_ids),
+            subject="",
+            window_start=after_epoch or 0,
+            window_end=before_epoch or 0,
+        )
         stats.duration_s = round(time.time() - started, 2)
         remember_run(session, stats)
         session.commit()
@@ -652,3 +780,39 @@ def run_once(
         log.exception("gmail watch renew failed")
     log.info("run complete: %s", {k: v for k, v in stats.as_dict().items() if k != "emails"})
     return stats
+
+
+def aligned_poll_loop(max_messages: int | None = None, interval_s: int | None = None) -> None:
+    """Wait for the next clock slot, then extract that 15-minute window, forever.
+
+    Boot at 6:03 → sleep until 6:15 → Gmail `after:6:00 before:6:15`, one email
+    at a time. A slow run that overruns the next mark catches up immediately.
+    """
+    interval = max(60, interval_s or get_settings().poll_interval_seconds)
+    init_db()
+    with session_scope() as session:
+        plant_poll_cursor(session, interval_s=interval)
+        session.commit()
+    next_end = next_slot_end(interval_s=interval)
+    first_start = next_end - interval
+    log.info(
+        "auto-sync aligned: first window %s–%s (mail before that skipped)",
+        fmt_et(datetime.fromtimestamp(first_start, tz=timezone.utc), "%I:%M %p ET"),
+        fmt_et(datetime.fromtimestamp(next_end, tz=timezone.utc), "%I:%M %p ET"),
+    )
+    while True:
+        delay = next_end - time.time()
+        if delay > 0:
+            log.info(
+                "auto-sync sleeping %.0fs until %s",
+                delay,
+                fmt_et(datetime.fromtimestamp(next_end, tz=timezone.utc), "%I:%M %p ET"),
+            )
+            time.sleep(delay)
+        start, end = slot_window(next_end, interval)
+        try:
+            stats = run_once(max_messages=max_messages, after_epoch=start, before_epoch=end)
+            log.info("auto-sync: %s", {k: v for k, v in stats.as_dict().items() if k != "emails"})
+        except Exception:
+            log.exception("auto-sync failed; will retry next slot")
+        next_end += interval

@@ -242,3 +242,44 @@ def test_clear_inbox_keeps_only_future_mail(session):
     assert session.exec(select(Job)).first() is None
     assert session.exec(select(Message)).first() is None
     assert int(db.get_state(session, pipeline.STATE_CURSOR)) > 0
+
+
+def test_build_query_closed_window_does_not_look_back(session):
+    query = pipeline.build_query(session, after_epoch=1_000, before_epoch=1_900)
+    assert "after:999" in query
+    assert "before:1900" in query
+    assert "after:1000" not in query
+
+
+def test_plant_cursor_jumps_to_slot_floor_and_skips_old_mail(session):
+    from datetime import datetime, timezone
+
+    from app.schedule import slot_floor
+
+    when = datetime(2026, 9, 10, 18, 3, tzinfo=timezone.utc)
+    db.set_state(session, pipeline.STATE_CURSOR, "100")
+    planted = pipeline.plant_poll_cursor(session, when=when, interval_s=900)
+    assert planted == slot_floor(when, 900)
+    assert int(db.get_state(session, pipeline.STATE_CURSOR)) == planted
+
+
+def test_plant_cursor_keeps_cursor_inside_current_slot(session):
+    from datetime import datetime, timezone
+
+    from app.schedule import slot_floor
+
+    when = datetime(2026, 9, 10, 18, 3, tzinfo=timezone.utc)
+    inside = slot_floor(when, 900) + 60
+    db.set_state(session, pipeline.STATE_CURSOR, str(inside))
+    assert pipeline.plant_poll_cursor(session, when=when, interval_s=900) == inside
+
+
+def test_process_email_stores_raw_extract_payload(session):
+    pipeline.process_email(session, alert_email(), LLM())
+    session.commit()
+    row = session.get(Message, "m1")
+    assert row.body_text
+    payload = pipeline.parse_extract_payload(row.extract_json)
+    assert payload
+    titles = {item.get("title") for item in payload}
+    assert "Data Scientist" in titles or "Machine Learning Engineer" in titles

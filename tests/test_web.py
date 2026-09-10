@@ -52,8 +52,9 @@ def test_status_page_shows_auto_sync_and_no_manual_buttons(client):
     response = test_client.get("/activity")
     assert response.status_code == 200
     body = response.content
-    assert b"Auto-sync" in body
+    assert b"Auto-sync" in body or b"Clock-aligned" in body
     assert b"15 minutes" in body
+    assert b":00" in body or b"15-minute" in body
     # The manual controls were removed in favour of automatic syncing.
     assert b"Check now" not in body
     assert b"Start fresh" not in body
@@ -82,7 +83,14 @@ def test_mail_page_bundles_jobs_under_the_email(client):
     assert b"8 new jobs match your preferences" in body or b"jobs match" in body.lower()
     assert b"Data Scientist" in body or b"Machine Learning" in body
     assert b"Mail" in body
+    assert b"Raw extract" in body
+    assert b"Analysis" in body
     assert b"/api/docs" not in body
+
+    raw = test_client.get("/?days=30&view=raw")
+    assert raw.status_code == 200
+    assert b"Email text" in raw.content
+    assert b"Extracted postings" in raw.content
 
 
 def test_matches_page_groups_by_day_and_shows_source_mail(client):

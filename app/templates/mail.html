@@ -1,16 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Mail — Inbox Job Agent{% endblock %}
+{% block main_class %}wide{% endblock %}
 {% block content %}
 {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
 
 <div class="page-head">
   <div>
     <h1>Mail</h1>
-    <div class="sub">Every job email in time order, with the postings and follow-ups it produced.</div>
+    <div class="sub">Inbox analysis for each email — classification, extracted postings, and the raw fields used to get there.</div>
   </div>
 </div>
 
 <form class="toolbar" method="get" action="/">
+  <div class="field grow">
+    <label>Search</label>
+    <input type="search" name="q" value="{{ q }}" placeholder="Subject, sender, or summary…">
+  </div>
   <div class="field">
     <label>Window</label>
     <select name="days" onchange="this.form.submit()">
@@ -23,92 +28,200 @@
     <label>Category</label>
     <select name="category" onchange="this.form.submit()">
       <option value="" {% if not category %}selected{% endif %}>All mail</option>
-      {% for option in ["job_alert", "recruiter_outreach", "interview_invite", "assessment", "next_step", "offer", "rejection", "application_update", "other"] %}
-      <option value="{{ option }}" {% if category == option %}selected{% endif %}>{{ option.replace("_", " ")|title }}</option>
+      {% for option in category_order %}
+      <option value="{{ option }}" {% if category == option %}selected{% endif %}>{{ category_labels.get(option, option) }}</option>
       {% endfor %}
     </select>
   </div>
-  <div class="actions"><button type="submit" class="btn-primary">Apply</button></div>
+  <div class="field">
+    <label>Contains</label>
+    <select name="has" onchange="this.form.submit()">
+      <option value="" {% if not has %}selected{% endif %}>Anything</option>
+      <option value="jobs" {% if has == "jobs" %}selected{% endif %}>Job postings</option>
+      <option value="followups" {% if has == "followups" %}selected{% endif %}>Follow-ups</option>
+      <option value="other" {% if has == "other" %}selected{% endif %}>Unclassified</option>
+    </select>
+  </div>
+  <div class="actions"><button type="submit" class="btn-primary">Filter</button></div>
 </form>
+
+<div class="stat-strip">
+  <span class="tag">{{ messages|length }} email{{ "s" if messages|length != 1 else "" }}</span>
+  <span class="tag accent">{{ mail_jobs }} posting{{ "s" if mail_jobs != 1 else "" }} extracted</span>
+  <span class="tag good">{{ mail_matches }} match{{ "es" if mail_matches != 1 else "" }}</span>
+  {% for key in category_order if category_counts.get(key) %}
+  <a class="tag {% if category == key %}accent{% endif %}" href="/?{{ mail_qs(category=key, m='') }}">{{ category_labels.get(key, key) }} · {{ category_counts[key] }}</a>
+  {% endfor %}
+</div>
 
 {% if not messages %}
 <div class="empty">
   <div class="big">No mail in this window</div>
-  New emails appear here automatically — the app syncs Gmail every {{ nav_sync.interval_min }} minutes.
+  Auto-sync waits for the next :00 / :15 / :30 / :45, then reads only that 15-minute slice — older unprocessed mail is skipped.
 </div>
 {% else %}
-<p class="result-count">{{ messages|length }} email{{ "s" if messages|length != 1 else "" }} in this window</p>
-{% endif %}
-
-{% for day, rows in day_groups %}
-<div class="day-head">{{ day }}</div>
-{% for message in rows %}
-{% set jobs = jobs_by_mail.get(message.id, []) %}
-{% set item = outreach_by_mail.get(message.id) %}
-<div class="card hover">
-  <div class="row">
-    <div style="min-width:0">
-      <h3>
-        <a href="https://mail.google.com/mail/u/0/#inbox/{{ message.id }}" target="_blank" rel="noopener">
-          {{ message.subject[:110] or "(no subject)" }}
-        </a>
-      </h3>
-      <div class="meta" style="margin-top:5px">
-        <span class="tag accent">{{ message.category.replace("_", " ")|title }}</span>
-        {% if message.email_type %}<span class="tag">{{ message.email_type }}</span>{% endif %}
-        <span>{{ message.sender }}</span>
-        <span class="sep">·</span>
-        <span>{{ message.received_at | et("%I:%M %p ET") }}</span>
-        {% if jobs %}
-          <span class="sep">·</span>
-          <span class="tag {% if matched_by_mail.get(message.id, 0) %}good{% endif %}">{{ matched_by_mail.get(message.id, 0) }}/{{ jobs|length }} match</span>
-        {% endif %}
-      </div>
-      {% if message.summary %}<p class="lede">{{ message.summary }}</p>{% endif %}
-    </div>
-  </div>
-
-  {% if item %}
-  <div class="subitem">
-    <div class="meta">
-      <span class="tag good">{{ item.kind.replace("_", " ")|title }}</span>
-      <b>{{ item.person }}</b>{% if item.company %}<span class="sep">·</span>{{ item.company }}{% endif %}{% if item.role %}<span class="sep">·</span>{{ item.role }}{% endif %}
-    </div>
-    {% if item.action_required %}<p class="lede">{{ item.action_required }}</p>{% endif %}
-    <div class="actions">
-      <a class="tag" href="/outreach">Open follow-ups →</a>
-      {% if item.scheduling_url %}<a class="tag accent" href="{{ item.scheduling_url }}" target="_blank" rel="noopener">Schedule</a>{% endif %}
-    </div>
-  </div>
-  {% endif %}
-
-  {% for job in jobs %}
-  <div class="subitem">
-    <div class="row">
-      <div style="min-width:0">
-        <b><a href="/job/{{ job.id }}">{{ job.title or "Untitled role" }}</a></b>
-        <div class="meta" style="margin-top:4px">
-          <span>{{ job.company or job.source }}</span>
-          {% if job.location %}<span class="sep">·</span><span>{{ job.location }}</span>{% endif %}
-          <span class="sep">·</span><span>{{ job.source }}</span>
-          {% if job.matched %}<span class="tag good">match</span>{% else %}<span class="tag">below threshold</span>{% endif %}
+<div class="workspace">
+  <div class="pane">
+    <div class="pane-scroll">
+      {% for day, rows in day_groups %}
+      <div class="day-head">{{ day }}</div>
+      {% for message in rows %}
+      {% set jobs = jobs_by_mail.get(message.id, []) %}
+      <a class="mail-row {% if selected and selected.id == message.id %}active{% endif %}" href="/?{{ mail_qs(m=message.id) }}">
+        <h3>{{ message.subject[:90] or "(no subject)" }}</h3>
+        <div class="meta">
+          <span class="tag {% if message.category in ('interview_invite','offer','next_step','assessment','recruiter_outreach') %}good{% elif message.category == 'job_alert' %}accent{% elif message.category == 'rejection' %}bad{% endif %}">{{ category_labels.get(message.category, message.category.replace("_", " ")|title) }}</span>
+          <span>{{ message.received_at | et("%I:%M %p") }}</span>
+          {% if jobs %}
+          <span class="tag {% if matched_by_mail.get(message.id, 0) %}good{% endif %}">{{ matched_by_mail.get(message.id, 0) }}/{{ jobs|length }}</span>
+          {% endif %}
         </div>
-      </div>
-      <div class="score {% if job.score >= 0.7 %}hi{% elif job.score >= 0.55 %}mid{% endif %}">{{ "%.2f"|format(job.score) }}</div>
-    </div>
-    <div class="actions">
-      <a class="tag" href="{{ job.url }}" target="_blank" rel="noopener">Open posting →</a>
-      {% for action in ["saved", "applied", "ignored"] if action != job.status %}
-      <form method="post" action="/job/{{ job.id }}/status">
-        <input type="hidden" name="status" value="{{ action }}">
-        <input type="hidden" name="redirect" value="/?days={{ days }}{% if category %}&category={{ category }}{% endif %}">
-        <button type="submit" class="btn-sm btn-ghost">{{ action|title }}</button>
-      </form>
+        <div class="meta">{{ message.sender }}</div>
+      </a>
+      {% endfor %}
       {% endfor %}
     </div>
   </div>
-  {% endfor %}
+
+  <div class="pane">
+    {% if selected %}
+    {% set jobs = selected_jobs %}
+    {% set item = selected_outreach %}
+    <div class="pane-head">
+      <h3 style="font-size:17px; line-height:1.35">
+        <a href="https://mail.google.com/mail/u/0/#inbox/{{ selected.id }}" target="_blank" rel="noopener">{{ selected.subject or "(no subject)" }}</a>
+      </h3>
+      <div class="meta" style="margin-top:6px">
+        <span>{{ selected.sender }}{% if selected.sender_email %} &lt;{{ selected.sender_email }}&gt;{% endif %}</span>
+        <span class="sep">·</span>
+        <span>{{ selected.received_at | et("%b %d, %I:%M %p ET") }}</span>
+        <span class="sep">·</span>
+        <span class="tag {% if selected.category in ('interview_invite','offer','next_step','assessment','recruiter_outreach') %}good{% elif selected.category == 'job_alert' %}accent{% endif %}">{{ category_labels.get(selected.category, selected.category.replace("_", " ")|title) }}</span>
+        {% if selected.email_type %}<span class="tag">{{ selected.email_type }}</span>{% endif %}
+      </div>
+    </div>
+    <div class="tabs-row">
+      <a class="{% if view != 'raw' %}on{% endif %}" href="/?{{ mail_qs(view='analysis') }}">Analysis</a>
+      <a class="{% if view == 'raw' %}on{% endif %}" href="/?{{ mail_qs(view='raw') }}">Raw extract</a>
+    </div>
+    <div class="pane-scroll">
+      <div class="pane-body">
+        {% if view == 'raw' %}
+        <p class="lede" style="margin-top:0">Left is every posting pulled from this email. Right is the stored email text. If a job is in the mail but missing on the left, that is an extraction miss — use it as feedback.</p>
+        <div class="extract-grid" style="margin-top:12px">
+          <div class="extract-col">
+            <h3>Extracted postings ({{ raw_extract|length }})</h3>
+            {% if not raw_extract %}
+            <p class="lede" style="margin:0">No structured postings stored for this email.{% if not selected.extract_json %} Processed before raw capture was added.{% endif %}</p>
+            {% else %}
+            <table class="compact">
+              <thead><tr><th>#</th><th>Title</th><th>Company</th><th>Location</th><th>Source</th></tr></thead>
+              <tbody>
+              {% for row in raw_extract %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                  <b>{{ row.title or "—" }}</b>
+                  {% if row.url %}<div><a class="joblink" href="{{ row.url }}" target="_blank" rel="noopener">{{ row.url[:90] }}</a></div>{% endif %}
+                  {% if row.context %}<div class="meta">{{ row.context[:220] }}</div>{% endif %}
+                  {% if row.url_key %}<div class="meta">key {{ row.url_key }}</div>{% endif %}
+                </td>
+                <td>{{ row.company or "—" }}</td>
+                <td>{{ row.location or "—" }}</td>
+                <td>{{ row.source or "—" }}</td>
+              </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+            {% endif %}
+          </div>
+          <div class="extract-col">
+            <h3>Email text</h3>
+            <pre>{{ selected.body_text or selected.snippet or "(no stored body — open Gmail to compare)" }}</pre>
+          </div>
+        </div>
+        {% else %}
+        <div class="analysis-grid">
+          <div class="card" style="margin:0">
+            <h3>Classification</h3>
+            <div class="kv" style="margin-top:10px">
+              <div class="k">Category</div><div>{{ category_labels.get(selected.category, selected.category.replace("_", " ")|title) }}</div>
+              <div class="k">Confidence</div><div>{{ "%.0f"|format((selected.confidence or 0) * 100) }}%</div>
+              <div class="k">Reason</div><div>{{ selected.reason or "—" }}</div>
+              <div class="k">Type</div><div>{{ selected.email_type or "—" }}</div>
+              <div class="k">Postings</div><div>{{ selected.jobs_matched }}/{{ selected.jobs_found }} matched</div>
+            </div>
+          </div>
+          <div class="card" style="margin:0">
+            <h3>Summary</h3>
+            <p class="lede">{{ selected.summary or selected.snippet or "No summary stored." }}</p>
+            {% if item %}
+            <div class="meta" style="margin-top:10px">
+              <span class="tag good">{{ item.kind.replace("_", " ")|title }}</span>
+              <b>{{ item.person }}</b>{% if item.company %}<span class="sep">·</span>{{ item.company }}{% endif %}{% if item.role %}<span class="sep">·</span>{{ item.role }}{% endif %}
+            </div>
+            {% if item.action_required %}<p class="lede" style="color:var(--warn)"><b>Action:</b> {{ item.action_required }}</p>{% endif %}
+            <div class="actions">
+              <a class="tag" href="/outreach">Open follow-ups →</a>
+              {% if item.scheduling_url %}<a class="tag accent" href="{{ item.scheduling_url }}" target="_blank" rel="noopener">Schedule</a>{% endif %}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+
+        <h3 style="margin:18px 0 8px; font-size:14px">Extracted postings</h3>
+        {% if not jobs %}
+        <p class="lede" style="margin:0">Nothing exploded into job rows. Open <b>Raw extract</b> to see what the parser returned.</p>
+        {% else %}
+        <table class="compact">
+          <thead>
+            <tr>
+              <th style="width:56px">Score</th>
+              <th>Role</th>
+              <th>Company</th>
+              <th>Location</th>
+              <th>Source</th>
+              <th>Fetch</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for job in jobs %}
+          <tr>
+            <td><span class="score {% if job.score >= 0.7 %}hi{% elif job.score >= 0.55 %}mid{% endif %}" style="min-width:0;padding:3px 8px;font-size:13px">{{ "%.2f"|format(job.score) }}</span></td>
+            <td>
+              <a href="/job/{{ job.id }}"><b>{{ job.title or "Untitled role" }}</b></a>
+              {% if job.matched %}<span class="tag good">match</span>{% else %}<span class="tag">below</span>{% endif %}
+              {% if job.verdict %}<div class="meta">{{ job.verdict[:140] }}</div>{% endif %}
+            </td>
+            <td>{{ job.company or "—" }}</td>
+            <td>{{ job.location or "—" }}</td>
+            <td>{{ job.source }}{% if job.extraction %} · {{ job.extraction }}{% endif %}</td>
+            <td><span class="tag {% if job.scrape_status == 'ok' %}good{% elif job.scrape_status == 'blocked' %}warn{% endif %}">{{ job.scrape_status or "?" }}</span></td>
+            <td>
+              <div class="actions" style="margin:0">
+                {% if job.url %}<a class="tag" href="{{ job.url }}" target="_blank" rel="noopener">Posting</a>{% endif %}
+                {% for action in ["saved", "applied", "ignored"] if action != job.status %}
+                <form method="post" action="/job/{{ job.id }}/status">
+                  <input type="hidden" name="status" value="{{ action }}">
+                  <input type="hidden" name="redirect" value="/?{{ mail_qs() }}">
+                  <button type="submit" class="btn-sm btn-ghost">{{ action|title }}</button>
+                </form>
+                {% endfor %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="empty"><div class="big">Select an email</div></div>
+    {% endif %}
+  </div>
 </div>
-{% endfor %}
-{% endfor %}
+{% endif %}
 {% endblock %}

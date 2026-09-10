@@ -31,6 +31,8 @@ class Message(SQLModel, table=True):
     jobs_found: int = 0
     jobs_matched: int = 0
     email_type: str = ""  # webinar | newsletter | security | unclassified (for category=other)
+    body_text: str = Field(default="", sa_column=Column(Text))  # plain text for raw-extract compare
+    extract_json: str = Field(default="", sa_column=Column(Text))  # candidates pulled from this mail
     processed_at: datetime = Field(default_factory=utcnow)
 
 

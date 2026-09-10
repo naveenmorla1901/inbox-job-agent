@@ -7,6 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -22,12 +23,15 @@ from .models import Application, ApplicationEvent, Job, Message, Outreach
 from .pipeline import (
     clear_inbox,
     load_last_run,
+    load_poll_progress,
     maybe_renew_watch,
+    parse_extract_payload,
     run_once,
     start_gmail_watch,
     watch_expiration_ms,
 )
-from .reporting import build_breakdown
+from .reporting import CATEGORY_LABELS, CATEGORY_ORDER, build_breakdown
+from .schedule import next_slot_end
 from .timefmt import fmt_et, group_by_et_day
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -45,11 +49,11 @@ def _gmail_configured() -> bool:
 
 
 def start_auto_poller() -> bool:
-    """Background thread that syncs Gmail every poll_interval_seconds.
+    """Background thread: clock-aligned 15-minute Gmail windows, one email at a time.
 
-    New mail then shows up on its own - no manual 'check' button. Skipped under
-    pytest and when Gmail is not configured, so it never blocks tests or an
-    unconfigured instance."""
+    Start at 6:03 waits until 6:15, then reads only 6:00–6:15. Older unprocessed
+    mail is skipped. Pytest and missing Gmail config leave this off.
+    """
     global _poller_started
     settings = get_settings()
     if _poller_started or not settings.auto_poll:
@@ -57,20 +61,15 @@ def start_auto_poller() -> bool:
     if os.environ.get("PYTEST_CURRENT_TEST") or not _gmail_configured():
         return False
     _poller_started = True
-    interval = max(60, settings.poll_interval_seconds)
 
     def loop() -> None:
-        time.sleep(5)  # let startup settle before the first sync
-        while True:
-            try:
-                stats = run_once()
-                log.info("auto-sync: %s", stats.as_dict())
-            except Exception:
-                log.exception("auto-sync failed; will retry next interval")
-            time.sleep(interval)
+        from .pipeline import aligned_poll_loop
+
+        aligned_poll_loop()
 
     threading.Thread(target=loop, name="job-auto-poller", daemon=True).start()
-    log.info("auto-sync started: every %d min", interval // 60)
+    interval = max(60, settings.poll_interval_seconds)
+    log.info("auto-sync started: clock-aligned every %d min", interval // 60)
     return True
 
 
@@ -89,19 +88,28 @@ def _template_nav(_request: Request) -> dict:
     """Header status shown on every page: pending follow-ups + last/next sync."""
     settings = get_settings()
     last_run: dict = {}
+    progress: dict = {}
     pending = 0
+    interval = max(60, settings.poll_interval_seconds)
+    next_end = next_slot_end(interval_s=interval)
+    next_at = datetime.fromtimestamp(next_end, tz=timezone.utc)
     try:
         with Session(get_engine()) as session:
             last_run = load_last_run(session)
+            progress = load_poll_progress(session)
             pending = pending_outreach_count(session)
     except Exception:
         pass
+    extracting = progress.get("status") == "running"
     return {
         "nav_pending": pending,
         "nav_sync": {
             "auto": settings.auto_poll,
-            "interval_min": max(1, settings.poll_interval_seconds // 60),
+            "interval_min": max(1, interval // 60),
             "last_run": last_run,
+            "next_at": next_at,
+            "progress": progress,
+            "extracting": extracting,
         },
     }
 
@@ -113,6 +121,11 @@ templates = Jinja2Templates(
 )
 templates.env.filters["et"] = fmt_et
 templates.env.filters["ago"] = lambda dt: _humanize_ago(dt)
+templates.env.filters["epoch_et"] = lambda ts, fmt="%I:%M %p ET": (
+    fmt_et(datetime.fromtimestamp(int(ts), tz=timezone.utc), fmt)
+    if ts not in (None, "", 0, "0")
+    else ""
+)
 
 
 def _humanize_ago(value) -> str:
@@ -178,11 +191,31 @@ def safe_next(value: str, fallback: str = "/") -> str:
     return fallback
 
 
-def mail_bundle(session: Session, days: int, category: str = "") -> tuple[list[Message], dict[str, list[Job]], dict[str, Outreach]]:
+def mail_bundle(
+    session: Session,
+    days: int,
+    category: str = "",
+    q: str = "",
+    has: str = "",
+) -> tuple[list[Message], dict[str, list[Job]], dict[str, Outreach]]:
     since = datetime.now(timezone.utc) - timedelta(days=max(1, days))
     stmt = select(Message).where(Message.received_at >= since)
     if category:
         stmt = stmt.where(Message.category == category)
+    if q:
+        like = f"%{q.lower()}%"
+        stmt = stmt.where(
+            func.lower(Message.subject).like(like)
+            | func.lower(Message.sender).like(like)
+            | func.lower(Message.sender_email).like(like)
+            | func.lower(Message.summary).like(like)
+        )
+    if has == "jobs":
+        stmt = stmt.where(Message.jobs_found > 0)
+    elif has == "followups":
+        stmt = stmt.where(col(Message.category).in_(FOLLOW_UP_KINDS))
+    elif has == "other":
+        stmt = stmt.where(Message.category == "other")
     messages = session.exec(stmt.order_by(col(Message.received_at).desc()).limit(150)).all()
     ids = [message.id for message in messages]
     jobs_by_mail: dict[str, list[Job]] = {}
@@ -228,13 +261,22 @@ def mail_page(
     session: Session = Depends(db_session),
     days: int = 2,
     category: str = "",
+    q: str = "",
+    has: str = "",
+    m: str = "",
+    view: str = "analysis",
     checked: str = "",
 ):
-    messages, jobs_by_mail, outreach_by_mail = mail_bundle(session, days=days, category=category)
+    messages, jobs_by_mail, outreach_by_mail = mail_bundle(
+        session, days=days, category=category, q=q, has=has
+    )
     matched_by_mail = {
         message_id: sum(1 for job in rows if job.matched)
         for message_id, rows in jobs_by_mail.items()
     }
+    selected = next((row for row in messages if row.id == m), None)
+    if selected is None and messages:
+        selected = messages[0]
     flash = ""
     if checked:
         last = load_last_run(session)
@@ -242,6 +284,39 @@ def mail_page(
             f"Checked {last.get('fetched', 0)} email(s). "
             f"Analyzed {last.get('processed', 0)} new."
         )
+    category_counts: dict[str, int] = {}
+    for row in messages:
+        category_counts[row.category] = category_counts.get(row.category, 0) + 1
+
+    def mail_qs(**overrides) -> str:
+        params = {
+            "days": days,
+            "category": category,
+            "q": q,
+            "has": has,
+            "m": selected.id if selected else m,
+            "view": view if view in ("analysis", "raw") else "analysis",
+        }
+        params.update(overrides)
+        clean = {key: value for key, value in params.items() if value not in (None, "")}
+        return urlencode(clean)
+
+    selected_jobs = jobs_by_mail.get(selected.id, []) if selected else []
+    raw_extract = parse_extract_payload(selected.extract_json) if selected else []
+    if selected and not raw_extract:
+        raw_extract = [
+            {
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "url": job.url,
+                "url_key": job.url_key,
+                "source": job.source,
+                "context": (job.description or "")[:600],
+            }
+            for job in selected_jobs
+        ]
+
     return templates.TemplateResponse(
         request,
         "mail.html",
@@ -251,10 +326,23 @@ def mail_page(
             "jobs_by_mail": jobs_by_mail,
             "matched_by_mail": matched_by_mail,
             "outreach_by_mail": outreach_by_mail,
+            "selected": selected,
+            "selected_jobs": selected_jobs,
+            "selected_outreach": outreach_by_mail.get(selected.id) if selected else None,
+            "raw_extract": raw_extract,
             "days": days,
             "category": category,
+            "q": q,
+            "has": has,
+            "view": view if view in ("analysis", "raw") else "analysis",
             "flash": flash,
             "pending_outreach": pending_outreach_count(session),
+            "category_labels": CATEGORY_LABELS,
+            "category_order": CATEGORY_ORDER,
+            "category_counts": category_counts,
+            "mail_jobs": sum(len(rows) for rows in jobs_by_mail.values()),
+            "mail_matches": sum(matched_by_mail.values()),
+            "mail_qs": mail_qs,
         },
     )
 
