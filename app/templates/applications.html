@@ -1,87 +1,84 @@
 {% extends "base.html" %}
 {% block title %}Applications — Inbox Job Agent{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div>
-    <h1>Applications</h1>
-    <div class="sub">One row per role you applied to, with its live status and mail timeline.</div>
-  </div>
-</div>
-
-<div class="kpis">
-  {% for status in ["applied", "in_review", "next_step", "assessment", "interview", "offer", "rejected"] %}
-  <div class="kpi {% if status in ('interview', 'offer', 'next_step') %}good{% endif %}">
-    <div class="n">{{ counts.get(status, 0) }}</div>
-    <div class="l">{{ status.replace("_", " ")|title }}</div>
-  </div>
-  {% endfor %}
-</div>
-
-<form class="toolbar" method="get" action="/applications">
-  <div class="field">
-    <label>Show</label>
-    <select name="show" onchange="this.form.submit()">
-      <option value="open" {% if show == 'open' %}selected{% endif %}>In progress</option>
-      <option value="all" {% if show == 'all' %}selected{% endif %}>Including closed</option>
-    </select>
-  </div>
-  <div class="actions"><button type="submit" class="btn-primary">Filter</button></div>
-</form>
-
-{% if not applications %}
-<div class="empty">
-  <div class="big">Nothing tracked yet</div>
-  An application appears when a confirmation email arrives (“thank you for applying…”) or when you mark a posting <b>Applied</b>.
-</div>
-{% endif %}
-
-{% for application in applications %}
-<div class="card hover">
-  <div class="row">
-    <div style="min-width:0">
-      <h3>
-        {% if application.job_url %}<a href="{{ application.job_url }}" target="_blank" rel="noopener">{{ application.role or "Role unknown" }}</a>
-        {% else %}{{ application.role or "Role unknown" }}{% endif %}
-      </h3>
-      <div class="meta" style="margin-top:5px">
-        <b>{{ application.company }}</b>
-        <span class="sep">·</span><span>applied {{ application.applied_at | et("%b %d") }}</span>
-        <span class="sep">·</span><span>updated {{ application.last_event_at | et("%b %d") }}</span>
-        {% if application.source %}<span class="sep">·</span><span>{{ application.source }}</span>{% endif %}
-        {% if application.id in stale %}<span class="tag warn">silent 14+ days</span>{% endif %}
+<div class="page-split">
+  <aside class="rail">
+    <form class="toolbar slim" method="get" action="/applications" style="flex-direction:column; align-items:stretch; margin:0">
+      <div class="field">
+        <label>Show</label>
+        <select name="show" onchange="this.form.submit()">
+          <option value="open" {% if show == 'open' %}selected{% endif %}>In progress</option>
+          <option value="all" {% if show == 'all' %}selected{% endif %}>Including closed</option>
+        </select>
       </div>
-      {% if application.next_action %}<p class="lede" style="color:var(--warn)"><b>Next:</b> {{ application.next_action }}</p>{% endif %}
-    </div>
-    <div>
-      <span class="tag {% if application.status in ('interview', 'offer', 'next_step') %}good{% elif application.status == 'rejected' %}bad{% else %}accent{% endif %}">{{ application.status.replace("_", " ")|title }}</span>
-    </div>
-  </div>
-
-  {% set timeline = events.get(application.id, []) %}
-  {% if timeline %}
-  <table style="margin-top:12px">
-    <tbody>
-    {% for event in timeline[:6] %}
-    <tr>
-      <td style="width:80px; color:var(--muted)">{{ event.occurred_at | et("%b %d") }}</td>
-      <td style="width:140px"><span class="tag">{{ event.kind.replace("_", " ")|title }}</span></td>
-      <td>{% if event.gmail_link %}<a href="{{ event.gmail_link }}" target="_blank" rel="noopener">{{ event.subject[:74] }}</a>{% else %}{{ event.subject[:74] }}{% endif %}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-
-  <div class="actions">
-    <span class="tag muted-link">Move to:</span>
-    {% for status in ["in_review", "next_step", "assessment", "interview", "offer", "rejected", "withdrawn"] if status != application.status %}
-    <form method="post" action="/application/{{ application.id }}/status">
-      <input type="hidden" name="status" value="{{ status }}">
-      <input type="hidden" name="redirect" value="/applications?show={{ show }}">
-      <button type="submit" class="btn-sm btn-ghost">{{ status.replace("_", " ")|title }}</button>
     </form>
+    {% for status in ["applied", "in_review", "next_step", "assessment", "interview", "offer", "rejected"] %}
+    <div class="rail-kpi {% if status in ('interview', 'offer', 'next_step') %}good{% endif %}">
+      <span>{{ status.replace("_", " ")|title }}</span>
+      <b>{{ counts.get(status, 0) }}</b>
+    </div>
     {% endfor %}
+  </aside>
+
+  {% if not applications %}
+  <div class="empty">
+    <div class="big">Nothing tracked yet</div>
+    An application appears when a confirmation email arrives (“thank you for applying…”) or when you mark a posting <b>Applied</b>.
   </div>
+  {% else %}
+  <div class="sheet-wrap">
+    <table class="sheet">
+      <thead>
+        <tr>
+          <th>Role</th>
+          <th>Company</th>
+          <th>Status</th>
+          <th>Applied</th>
+          <th>Updated</th>
+          <th>Source</th>
+          <th>Last mail</th>
+          <th>Move</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for application in applications %}
+      {% set timeline = events.get(application.id, []) %}
+      <tr>
+        <td>
+          {% if application.job_url %}<a href="{{ application.job_url }}" target="_blank" rel="noopener"><b>{{ application.role or "Role unknown" }}</b></a>
+          {% else %}<b>{{ application.role or "Role unknown" }}</b>{% endif %}
+          {% if application.id in stale %}<div class="meta" style="color:var(--warn)">silent 14+ days</div>{% endif %}
+          {% if application.next_action %}<div class="meta" style="color:var(--warn)">{{ application.next_action }}</div>{% endif %}
+        </td>
+        <td class="tight">{{ application.company }}</td>
+        <td class="tight"><span class="tag {% if application.status in ('interview', 'offer', 'next_step') %}good{% elif application.status == 'rejected' %}bad{% else %}accent{% endif %}">{{ application.status.replace("_", " ")|title }}</span></td>
+        <td class="tight mono">{{ application.applied_at | et("%b %d") }}</td>
+        <td class="tight mono">{{ application.last_event_at | et("%b %d") }}</td>
+        <td class="tight">{{ application.source or "—" }}</td>
+        <td>
+          {% if timeline %}
+          {% set event = timeline[0] %}
+          {% if event.gmail_link %}<a href="{{ event.gmail_link }}" target="_blank" rel="noopener">{{ event.subject[:70] }}</a>
+          {% else %}{{ event.subject[:70] }}{% endif %}
+          <div class="meta">{{ event.occurred_at | et("%b %d") }} · {{ event.kind.replace("_", " ") }}</div>
+          {% else %}—{% endif %}
+        </td>
+        <td class="tight">
+          <form method="post" action="/application/{{ application.id }}/status">
+            <input type="hidden" name="redirect" value="/applications?show={{ show }}">
+            <select name="status" onchange="this.form.submit()">
+              <option value="{{ application.status }}" selected>{{ application.status.replace("_", " ")|title }}</option>
+              {% for status in ["in_review", "next_step", "assessment", "interview", "offer", "rejected", "withdrawn"] if status != application.status %}
+              <option value="{{ status }}">{{ status.replace("_", " ")|title }}</option>
+              {% endfor %}
+            </select>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 </div>
-{% endfor %}
 {% endblock %}

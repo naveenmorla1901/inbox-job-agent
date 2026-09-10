@@ -31,7 +31,7 @@ from .issues import record_issue
 from .models import Application, ApplicationEvent, Issue, Job, Message, Outreach, PollRun
 from .notify import Notifier
 from .schedule import next_tick_epoch, tick_window
-from .scrape import SHELL_TITLE, ScrapedJob, fetch_all, fetch_job, llm_extract
+from .scrape import SHELL_TITLE, ScrapedJob, fetch_all, fetch_job, llm_extract, notable_scrape_failures
 from .timefmt import EASTERN, as_et, fmt_et, parse_et_datetime
 
 log = logging.getLogger(__name__)
@@ -143,7 +143,7 @@ def ensure_poll_origin(
             status="ok",
             window_start=now_ts,
             window_end=now_ts,
-            note=f"origin={identity}; mail before this skipped",
+            note="Deploy started polling. Mail from before this time is skipped on purpose.",
         )
     )
     log.info("poll origin set to now (%s); mail before this is skipped", identity)
@@ -782,15 +782,19 @@ def _should_store_jobs(result: Classification, candidates: list[JobCandidate]) -
 
 
 def _note_scrape_problems(scraped: dict, message_id: str) -> None:
-    bad = [page for page in scraped.values() if getattr(page, "status", "") in {"error", "blocked"}]
+    bad = notable_scrape_failures(scraped)
     if not bad:
         return
     statuses = sorted({page.status for page in bad})
+    lines = []
+    for page in bad[:8]:
+        url = getattr(page, "final_url", "") or getattr(page, "url", "") or ""
+        lines.append(f"{page.status}: {url}".strip())
     record_issue(
         "scrape",
         f"Job page fetch {', '.join(statuses)} ({len(bad)} link(s))",
-        "\n".join(f"{page.status}: {getattr(page, 'url', '')}" for page in bad[:8]),
-        severity="warn" if statuses == ["blocked"] else "error",
+        "\n".join(lines),
+        severity="warn" if "error" not in statuses else "error",
         message_id=message_id,
     )
 

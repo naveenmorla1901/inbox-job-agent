@@ -42,15 +42,15 @@
       position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.85);
       backdrop-filter: saturate(180%) blur(8px); border-bottom: 1px solid var(--line);
     }
-    .bar { max-width: none; margin: 0 auto; padding: 0 20px; height: 58px;
-      display: flex; align-items: center; gap: 26px; }
+    .bar { max-width: none; margin: 0 auto; padding: 0 14px; height: 46px;
+      display: flex; align-items: center; gap: 16px; }
     .brand { display: flex; align-items: center; gap: 10px; font-weight: 700;
       font-size: 15px; color: var(--text); white-space: nowrap; }
     .brand:hover { text-decoration: none; }
     .brand .mark { width: 26px; height: 26px; border-radius: 8px; background: var(--accent);
       color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 15px; }
     nav.tabs { display: flex; gap: 4px; flex: 1; overflow-x: auto; }
-    nav.tabs a { color: var(--muted); font-size: 14px; font-weight: 550; padding: 8px 12px;
+    nav.tabs a { color: var(--muted); font-size: 13px; font-weight: 550; padding: 6px 9px;
       border-radius: 8px; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
     nav.tabs a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
     nav.tabs a.active { color: var(--accent); background: var(--accent-soft); }
@@ -64,24 +64,27 @@
     .sync b { color: var(--text); font-weight: 600; }
 
     /* ---------- Layout ---------- */
-    main { max-width: 1480px; margin: 0 auto; padding: 20px 24px 72px; }
-    main.wide { max-width: none; padding: 16px 20px 20px; height: calc(100vh - 58px);
+    main { max-width: none; margin: 0 auto; padding: 8px 16px 28px; }
+    main.wide { max-width: none; padding: 8px 12px 10px; height: calc(100vh - 46px);
       display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
     .page-head { display: flex; align-items: flex-end; justify-content: space-between;
-      gap: 16px; margin-bottom: 14px; flex-wrap: wrap; flex-shrink: 0; }
-    .page-head h1 { font-size: 22px; }
-    .page-head .sub { color: var(--muted); font-size: 13.5px; margin-top: 3px; }
+      gap: 12px; margin-bottom: 8px; flex-wrap: wrap; flex-shrink: 0; }
+    .page-head h1 { font-size: 18px; }
+    .page-head .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 
     /* ---------- Toolbar / filters ---------- */
-    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
-      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-      padding: 12px 14px; margin-bottom: 14px; box-shadow: var(--shadow); flex-shrink: 0; }
-    .field { display: flex; flex-direction: column; gap: 5px; }
-    .field label { font-size: 11.5px; font-weight: 600; color: var(--faint);
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end;
+      background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+      padding: 6px 8px; margin-bottom: 8px; box-shadow: var(--shadow); flex-shrink: 0; }
+    .toolbar.slim { align-items: center; padding: 4px 8px; }
+    .toolbar.slim .field { flex-direction: row; align-items: center; gap: 6px; }
+    .toolbar.slim .field label { margin: 0; }
+    .field { display: flex; flex-direction: column; gap: 3px; }
+    .field label { font-size: 11px; font-weight: 600; color: var(--faint);
       text-transform: uppercase; letter-spacing: .04em; }
     input, select, button, textarea {
       font: inherit; color: var(--text); background: var(--surface);
-      border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px;
+      border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px;
       transition: border-color .12s, box-shadow .12s;
     }
     input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent-line);
@@ -95,28 +98,28 @@
     .btn-ghost { background: var(--surface); }
     .btn-sm { padding: 5px 9px; font-size: 12.5px; border-radius: 8px; }
     .btn-danger { color: var(--bad); border-color: var(--bad-line); background: var(--bad-soft); }
-    .toolbar .grow { flex: 1; min-width: 160px; }
-    .toolbar .actions { margin-left: auto; display: flex; gap: 8px; align-items: flex-end; }
-    .result-count { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+    .toolbar .grow { flex: 1; min-width: 140px; }
+    .toolbar .actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+    .result-count { color: var(--muted); font-size: 12.5px; margin: 0 0 6px; }
 
     /* ---------- Inbox workspace ---------- */
-    .workspace { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
-      gap: 14px; flex: 1; min-height: 0; }
+    .workspace { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+      gap: 8px; flex: 1; min-height: 0; }
     .pane { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
       box-shadow: var(--shadow); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
     .pane-scroll { overflow: auto; flex: 1; min-height: 0; }
-    .mail-row { display: block; padding: 11px 14px; border-bottom: 1px solid var(--line-2);
+    .mail-row { display: block; padding: 7px 10px; border-bottom: 1px solid var(--line-2);
       color: inherit; cursor: pointer; }
     .mail-row:hover { background: var(--surface-2); text-decoration: none; }
     .mail-row.active { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
-    .mail-row h3 { font-size: 13.5px; font-weight: 600; line-height: 1.35;
+    .mail-row h3 { font-size: 13px; font-weight: 600; line-height: 1.3;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .mail-row .meta { margin-top: 4px; font-size: 12.5px; }
-    .pane-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
-    .pane-body { padding: 16px 18px 24px; }
-    .tabs-row { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--line);
+    .mail-row .meta { margin-top: 2px; font-size: 12px; }
+    .pane-head { padding: 8px 12px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+    .pane-body { padding: 10px 12px 16px; }
+    .tabs-row { display: flex; gap: 4px; padding: 4px 10px 0; border-bottom: 1px solid var(--line);
       flex-shrink: 0; }
-    .tabs-row a { padding: 8px 12px; font-size: 13px; font-weight: 600; color: var(--muted);
+    .tabs-row a { padding: 6px 10px; font-size: 12.5px; font-weight: 600; color: var(--muted);
       border-bottom: 2px solid transparent; margin-bottom: -1px; }
     .tabs-row a:hover { color: var(--text); text-decoration: none; }
     .tabs-row a.on { color: var(--accent); border-bottom-color: var(--accent); }
@@ -125,7 +128,7 @@
     .extract-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
     .extract-col h3 { font-size: 13px; margin-bottom: 8px; }
     .extract-col pre { flex: 1; max-height: none; margin: 0; }
-    .stat-strip { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; flex-shrink: 0; }
+    .stat-strip { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 6px; flex-shrink: 0; align-items: center; }
     .stat-strip .tag { font-variant-numeric: tabular-nums; }
     .analysis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
     .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; font-size: 13.5px; }
@@ -140,6 +143,10 @@
     table.compact td { padding: 8px 10px; font-size: 13px; }
 
     /* ---------- Cards / list ---------- */
+    .card {
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 10px 12px; box-shadow: var(--shadow); margin-bottom: 10px;
+    }
     .card.danger { border-color: var(--bad-line); }
     .card.hover:hover { box-shadow: var(--shadow-md); border-color: #d7dbe2; }
     .card h3 { font-size: 15.5px; }
@@ -186,12 +193,12 @@
       font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
     /* ---------- KPIs ---------- */
-    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 12px; margin-bottom: 20px; }
-    .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-      padding: 15px 16px; box-shadow: var(--shadow); }
-    .kpi .n { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
-    .kpi .l { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 8px; margin-bottom: 8px; }
+    .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+      padding: 8px 10px; box-shadow: var(--shadow); }
+    .kpi .n { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+    .kpi .l { color: var(--muted); font-size: 11.5px; margin-top: 1px; }
     .kpi.accent .n { color: var(--accent); }
     .kpi.good .n { color: var(--good); }
 
@@ -208,8 +215,8 @@
     .chart-col .lbl { font-size: 10px; color: var(--faint); margin-top: 4px; white-space: nowrap; }
 
     /* ---------- Day divider ---------- */
-    .day-head { color: var(--faint); font-size: 12px; font-weight: 700; letter-spacing: .06em;
-      text-transform: uppercase; margin: 26px 0 12px; display: flex; align-items: center; gap: 10px; }
+    .day-head { color: var(--faint); font-size: 11px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; margin: 10px 0 6px; display: flex; align-items: center; gap: 10px; }
     .day-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 
     /* ---------- Nested job rows inside a mail card ---------- */
@@ -217,9 +224,35 @@
     .subitem:first-of-type { border-top: 1px solid var(--line); margin-top: 12px; }
 
     /* ---------- Misc ---------- */
-    .empty { text-align: center; padding: 64px 20px; color: var(--muted); }
+    .page-split { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 10px; align-items: start; }
+    .rail { position: sticky; top: 54px; display: flex; flex-direction: column; gap: 6px; }
+    .rail-kpi { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+      padding: 6px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+      font-size: 12px; color: var(--muted); }
+    .rail-kpi b { font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; }
+    .rail-kpi.good b { color: var(--good); }
+    .dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 10px; margin-bottom: 10px; align-items: start; }
+    .dash-grid .card { margin-bottom: 0; }
+    .sheet-wrap { overflow: auto; background: var(--surface); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow); }
+    table.sheet { font-size: 12.5px; }
+    table.sheet thead th { position: sticky; top: 0; background: var(--surface-2); z-index: 1;
+      padding: 6px 8px; }
+    table.sheet tbody td { padding: 5px 8px; vertical-align: middle; }
+    table.sheet tbody tr:hover { background: var(--surface-2); }
+    table.sheet .tight { white-space: nowrap; }
+    .cell-actions { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin: 0; }
+    .cell-actions form { margin: 0; }
+    @media (max-width: 900px) {
+      .page-split { grid-template-columns: 1fr; }
+      .rail { position: static; flex-direction: row; flex-wrap: wrap; }
+      .rail-kpi { min-width: 110px; }
+    }
+
+    .empty { text-align: center; padding: 40px 20px; color: var(--muted); }
     .empty .big { font-size: 17px; color: var(--text); font-weight: 600; margin-bottom: 6px; }
-    .flash { border-radius: var(--radius); padding: 12px 16px; margin-bottom: 18px; font-size: 14px;
+    .flash { border-radius: var(--radius); padding: 8px 12px; margin-bottom: 8px; font-size: 13px;
       background: var(--good-soft); border: 1px solid var(--good-line); color: var(--good); }
     .flash.bad { background: var(--bad-soft); border-color: var(--bad-line); color: var(--bad); }
     .notice { background: var(--warn-soft); border: 1px solid var(--warn-line); color: var(--warn);

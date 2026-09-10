@@ -2,67 +2,61 @@
 {% block title %}Overview — Inbox Job Agent{% endblock %}
 {% block content %}
 {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
-<div class="page-head">
-  <div>
-    <h1>Overview</h1>
-    <div class="sub">What landed in your inbox and what the agent did with it.</div>
-  </div>
-</div>
 
-<form class="toolbar" method="get" action="/overview">
+<form class="toolbar slim" method="get" action="/overview">
   <div class="field">
     <label>Window</label>
     <select name="days" onchange="this.form.submit()">
       {% for option in [1, 2, 3, 7, 14, 30, 90] %}
-      <option value="{{ option }}" {% if days == option %}selected{% endif %}>Last {{ option }} day{{ "s" if option > 1 else "" }}</option>
+      <option value="{{ option }}" {% if days == option %}selected{% endif %}>{{ option }}d</option>
       {% endfor %}
     </select>
   </div>
   <div class="field"><label>From</label><input type="date" name="since" value="{{ since }}"></div>
   <div class="field"><label>To</label><input type="date" name="until" value="{{ until }}"></div>
   {% if app_q %}<input type="hidden" name="app_q" value="{{ app_q }}">{% endif %}
-  <div class="actions"><button type="submit" class="btn-primary">Apply range</button></div>
+  <div class="actions"><button type="submit" class="btn-primary btn-sm">Apply</button></div>
 </form>
 
 <div class="kpis">
-  <div class="kpi"><div class="n">{{ report.messages }}</div><div class="l">Emails processed</div></div>
-  <div class="kpi accent"><div class="n">{{ report.jobs_stored }}</div><div class="l">Postings extracted</div></div>
-  <div class="kpi good"><div class="n">{{ report.jobs_matched }}</div><div class="l">Match your profile</div></div>
-  <div class="kpi"><div class="n">{{ report.jobs_duplicates }}</div><div class="l">Repeats collapsed</div></div>
-  <div class="kpi"><div class="n">{{ report.applications_open }}</div><div class="l">Applications in progress</div></div>
-  <div class="kpi"><div class="n">{{ report.outreach_open }}</div><div class="l">Follow-ups open</div></div>
+  <div class="kpi"><div class="n">{{ report.messages }}</div><div class="l">Emails</div></div>
+  <div class="kpi accent"><div class="n">{{ report.jobs_stored }}</div><div class="l">Postings</div></div>
+  <div class="kpi good"><div class="n">{{ report.jobs_matched }}</div><div class="l">Matches</div></div>
+  <div class="kpi"><div class="n">{{ report.jobs_duplicates }}</div><div class="l">Repeats</div></div>
+  <div class="kpi"><div class="n">{{ report.applications_open }}</div><div class="l">Apps open</div></div>
+  <div class="kpi"><div class="n">{{ report.outreach_open }}</div><div class="l">Follow-ups</div></div>
 </div>
 
-<div class="card">
-  <h3>Mail by category</h3>
-  <div class="sub" style="margin:2px 0 8px; color:var(--muted)">Window: {{ report.window_label }} ({{ report.since }} → {{ report.until }})</div>
-  <table>
-    <thead><tr><th>Category</th><th style="width:90px">Count</th></tr></thead>
-    <tbody>
-    {% for key, label, count in report.categories %}
-    <tr>
-      <td>{% if key == 'other' %}<a href="/?category=other&days={{ report.days }}">{{ label }}</a>{% else %}{{ label }}{% endif %}</td>
-      <td><b>{{ count }}</b></td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</div>
-
-<div class="row" style="gap:14px; align-items:stretch; flex-wrap:wrap">
-  <div class="card" style="flex:1; min-width:280px">
+<div class="dash-grid">
+  <div class="card">
+    <h3>Mail by category</h3>
+    <div class="sub" style="margin:2px 0 6px; color:var(--muted); font-size:12px">{{ report.window_label }}</div>
+    <table class="compact">
+      <thead><tr><th>Category</th><th style="width:70px">Count</th></tr></thead>
+      <tbody>
+      {% for key, label, count in report.categories %}
+      <tr>
+        <td>{% if key == 'other' %}<a href="/?category=other&days={{ report.days }}">{{ label }}</a>{% else %}{{ label }}{% endif %}</td>
+        <td><b>{{ count }}</b></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
     <h3>Sources</h3>
     <div class="tags mt">
       {% for source, count in report.sources %}<span class="tag">{{ source }} · {{ count }}</span>{% else %}<span class="tag">none</span>{% endfor %}
     </div>
-    <h3 style="margin-top:16px">Link fetches</h3>
+    <h3 style="margin-top:12px">Link fetches</h3>
     <div class="tags mt">
       {% for status, count in report.scrape_status %}
       <span class="tag {% if status == 'ok' %}good{% elif status == 'blocked' %}warn{% endif %}">{{ status }} · {{ count }}</span>
       {% else %}<span class="tag">none</span>{% endfor %}
     </div>
+    <p class="lede" style="margin-top:8px">LinkedIn / Indeed login walls are expected. Matching still uses the email text.</p>
   </div>
-  <div class="card" style="flex:1; min-width:280px">
+  <div class="card">
     <h3>Applications</h3>
     <div class="tags mt">
       {% for status, count in report.applications %}
@@ -73,79 +67,79 @@
   </div>
 </div>
 
-{% if report.top_jobs %}
-<div class="card">
-  <h3>Best matches in this window</h3>
-  <table>
-    <thead><tr><th style="width:64px">Score</th><th>Role</th><th>Company</th><th style="width:110px">Source</th></tr></thead>
-    <tbody>
-    {% for job in report.top_jobs %}
-    <tr>
-      <td><span class="score {% if job.score >= 0.7 %}hi{% elif job.score >= 0.55 %}mid{% endif %}" style="min-width:0;padding:3px 8px;font-size:13px">{{ "%.2f"|format(job.score) }}</span></td>
-      <td><a href="/job/{{ job.id }}">{{ job.title[:64] or "Untitled" }}</a></td>
-      <td>{{ job.company[:32] }}</td>
-      <td>{{ job.source }}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endif %}
-
-<div class="card">
-  <h3>Application funnel</h3>
-  <p class="lede">Every application touched in this window — search by company or role. Rates are among the rows in this filter, not all-time.</p>
-  <form class="toolbar" method="get" action="/overview" style="margin:12px 0 0; box-shadow:none">
-    <input type="hidden" name="days" value="{{ days }}">
-    <input type="hidden" name="since" value="{{ since }}">
-    <input type="hidden" name="until" value="{{ until }}">
-    <div class="field grow">
-      <label>Search applications</label>
-      <input type="search" name="app_q" value="{{ app_q }}" placeholder="Company, role, or status…">
-    </div>
-    <div class="actions">
-      <button type="submit" class="btn-primary">Search</button>
-      {% if app_q %}<a class="tag" href="/overview?days={{ days }}{% if since %}&since={{ since }}{% endif %}{% if until %}&until={{ until }}{% endif %}">Clear</a>{% endif %}
-    </div>
-  </form>
-  <div class="kpis" style="margin-top:14px">
-    <div class="kpi"><div class="n">{{ funnel.total }}</div><div class="l">In this filter</div></div>
-    <div class="kpi good"><div class="n">{{ "%.0f"|format(funnel.interview_rate * 100) }}%</div><div class="l">Interview or offer</div></div>
-    <div class="kpi"><div class="n">{{ "%.0f"|format(funnel.offer_rate * 100) }}%</div><div class="l">Offer rate</div></div>
+<div class="dash-grid">
+  {% if report.top_jobs %}
+  <div class="card">
+    <h3>Best matches</h3>
+    <table class="compact">
+      <thead><tr><th style="width:56px">Score</th><th>Role</th><th>Company</th><th>Source</th></tr></thead>
+      <tbody>
+      {% for job in report.top_jobs %}
+      <tr>
+        <td><span class="score {% if job.score >= 0.7 %}hi{% elif job.score >= 0.55 %}mid{% endif %}" style="min-width:0;padding:2px 6px;font-size:12px">{{ "%.2f"|format(job.score) }}</span></td>
+        <td><a href="/job/{{ job.id }}">{{ job.title[:64] or "Untitled" }}</a></td>
+        <td>{{ job.company[:32] }}</td>
+        <td>{{ job.source }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
   </div>
-  <div class="funnel">
-    {% for status, count in funnel.stages %}
-    <div class="funnel-row">
-      <div>{{ status.replace("_", " ")|title }}</div>
-      <div class="bar"><span style="width: {{ (count / funnel.peak * 100) if funnel.peak else 0 }}%"></span></div>
-      <div><b>{{ count }}</b></div>
-    </div>
-    {% endfor %}
-    {% for status, count in funnel.exits %}
-    <div class="funnel-row exit">
-      <div>{{ status.replace("_", " ")|title }}</div>
-      <div class="bar"><span style="width: {{ (count / funnel.peak * 100) if funnel.peak else 0 }}%"></span></div>
-      <div><b>{{ count }}</b></div>
-    </div>
-    {% endfor %}
-  </div>
-  {% if funnel.rows %}
-  <table class="compact" style="margin-top:14px">
-    <thead><tr><th>Role</th><th>Company</th><th>Status</th><th>Updated</th></tr></thead>
-    <tbody>
-    {% for application in funnel.rows %}
-    <tr>
-      <td>{% if application.job_url %}<a href="{{ application.job_url }}" target="_blank" rel="noopener">{{ application.role or "Role unknown" }}</a>{% else %}{{ application.role or "Role unknown" }}{% endif %}</td>
-      <td>{{ application.company }}</td>
-      <td><span class="tag {% if application.status in ('interview', 'offer', 'next_step') %}good{% elif application.status == 'rejected' %}bad{% endif %}">{{ application.status.replace("_", " ")|title }}</span></td>
-      <td class="mono">{{ application.last_event_at | et("%b %d") }}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  <div class="actions"><a class="tag accent" href="/applications">Open full tracker →</a></div>
-  {% else %}
-  <p class="lede">No applications in this window{% if app_q %} match “{{ app_q }}”{% endif %}.</p>
   {% endif %}
+
+  <div class="card">
+    <h3>Application funnel</h3>
+    <form class="toolbar slim" method="get" action="/overview" style="margin:8px 0 0; box-shadow:none">
+      <input type="hidden" name="days" value="{{ days }}">
+      <input type="hidden" name="since" value="{{ since }}">
+      <input type="hidden" name="until" value="{{ until }}">
+      <div class="field grow">
+        <label>Search applications</label>
+        <input type="search" name="app_q" value="{{ app_q }}" placeholder="Company, role, or status…">
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn-primary btn-sm">Search</button>
+        {% if app_q %}<a class="tag" href="/overview?days={{ days }}{% if since %}&since={{ since }}{% endif %}{% if until %}&until={{ until }}{% endif %}">Clear</a>{% endif %}
+      </div>
+    </form>
+    <div class="kpis" style="margin-top:8px">
+      <div class="kpi"><div class="n">{{ funnel.total }}</div><div class="l">In filter</div></div>
+      <div class="kpi good"><div class="n">{{ "%.0f"|format(funnel.interview_rate * 100) }}%</div><div class="l">Interview+</div></div>
+      <div class="kpi"><div class="n">{{ "%.0f"|format(funnel.offer_rate * 100) }}%</div><div class="l">Offer</div></div>
+    </div>
+    <div class="funnel">
+      {% for status, count in funnel.stages %}
+      <div class="funnel-row">
+        <div>{{ status.replace("_", " ")|title }}</div>
+        <div class="bar"><span style="width: {{ (count / funnel.peak * 100) if funnel.peak else 0 }}%"></span></div>
+        <div><b>{{ count }}</b></div>
+      </div>
+      {% endfor %}
+      {% for status, count in funnel.exits %}
+      <div class="funnel-row exit">
+        <div>{{ status.replace("_", " ")|title }}</div>
+        <div class="bar"><span style="width: {{ (count / funnel.peak * 100) if funnel.peak else 0 }}%"></span></div>
+        <div><b>{{ count }}</b></div>
+      </div>
+      {% endfor %}
+    </div>
+    {% if funnel.rows %}
+    <table class="compact" style="margin-top:8px">
+      <thead><tr><th>Role</th><th>Company</th><th>Status</th><th>Updated</th></tr></thead>
+      <tbody>
+      {% for application in funnel.rows %}
+      <tr>
+        <td>{% if application.job_url %}<a href="{{ application.job_url }}" target="_blank" rel="noopener">{{ application.role or "Role unknown" }}</a>{% else %}{{ application.role or "Role unknown" }}{% endif %}</td>
+        <td>{{ application.company }}</td>
+        <td><span class="tag {% if application.status in ('interview', 'offer', 'next_step') %}good{% elif application.status == 'rejected' %}bad{% endif %}">{{ application.status.replace("_", " ")|title }}</span></td>
+        <td class="mono">{{ application.last_event_at | et("%b %d") }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="lede">No applications in this window{% if app_q %} match “{{ app_q }}”{% endif %}.</p>
+    {% endif %}
+  </div>
 </div>
 {% endblock %}

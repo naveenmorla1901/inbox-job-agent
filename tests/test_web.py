@@ -55,7 +55,7 @@ def test_status_page_shows_auto_sync_and_no_manual_buttons(client):
     assert b"Auto-sync" in body or b"Poll interval" in body
     assert b"Poll interval" in body
     assert b"min" in body
-    assert b"Origin" in body
+    assert b"Poll start" in body
     # The manual controls were removed in favour of automatic syncing.
     assert b"Check now" not in body
     assert b"Start fresh" not in body
@@ -185,7 +185,7 @@ def test_matches_page_groups_by_day_and_shows_source_mail(client):
 
     response = test_client.get("/matches?days=30&show=all&status=all")
     assert response.status_code == 200
-    assert b"from" in response.content
+    assert b"from" in response.content or b"Details" in response.content
     assert test_client.get("/messages").status_code in (200, 302)
 
 
@@ -296,3 +296,29 @@ def test_reextract_this_email_rewrites_jobs(client):
     with Session(engine) as session:
         after = session.exec(select(func.count()).select_from(Job)).one()
     assert after == before
+
+
+def test_mail_defaults_to_one_day(client):
+    test_client, _engine = client
+    response = test_client.get("/")
+    assert response.status_code == 200
+    body = response.text
+    assert 'value="1" selected' in body or "value=\"1\" selected" in body
+    assert "<h1>Mail</h1>" not in body
+
+
+def test_applications_page_is_a_sheet(client):
+    test_client, _engine = client
+    response = test_client.get("/applications")
+    assert response.status_code == 200
+    body = response.text
+    assert "<h1>Applications</h1>" not in body
+    assert "In review" in body or "in_review" in body.lower() or "In Review" in body
+
+
+def test_overview_puts_category_table_in_a_grid(client):
+    test_client, _engine = client
+    response = test_client.get("/overview")
+    assert response.status_code == 200
+    assert b"dash-grid" in response.content
+    assert b"<h1>Overview</h1>" not in response.content

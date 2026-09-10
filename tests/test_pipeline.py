@@ -5,7 +5,7 @@ from app import db, pipeline
 from app.config import get_settings
 from app.email_parse import ParsedEmail, extract_links
 from app.llm import LLM
-from app.models import Application, Issue, Job, Message, Outreach
+from app.models import Application, Issue, Job, Message, Outreach, PollRun
 from app.reporting import build_breakdown
 from tests.test_extract import alert_email
 from tests.test_classify import email as plain_email
@@ -316,6 +316,11 @@ def test_ensure_origin_resets_stale_cursor_on_new_boot(session, monkeypatch):
     assert info["reset"] is True
     assert info["cursor"] == int(when.timestamp())
     assert int(db.get_state(session, pipeline.STATE_CURSOR)) == int(when.timestamp())
+    run = session.exec(select(PollRun)).first()
+    assert run is not None
+    assert run.trigger == "boot"
+    assert "skipped on purpose" in run.note
+    assert "cloud:" not in run.note
 
 
 def test_ensure_origin_keeps_cursor_on_same_revision(session):

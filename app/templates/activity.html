@@ -7,7 +7,7 @@
 <div class="page-head">
   <div>
     <h1>Status</h1>
-    <div class="sub">{{ nav_sync.interval_min }}-minute extract from the moment this revision started. Mail before that is skipped. Cloud Run is woken by Cloud Scheduler; this laptop uses an in-process loop.</div>
+    <div class="sub">Extracts every {{ nav_sync.interval_min }} minutes from this deploy. A <b>Deploy</b> row is that start time — not a failure. Mail from before it is skipped on purpose so old inbox history is not re-fetched.</div>
   </div>
   <div class="actions" style="margin:0">
     <a class="btn-sm" href="/issues">Open issues{% if issue_counts.error %} ({{ issue_counts.error }} errors / 24h){% endif %}</a>
@@ -21,7 +21,7 @@
   </div>
   <div class="kpi">
     <div class="n" style="font-size:18px">{% if origin %}{{ origin | epoch_et("%I:%M %p ET") }}{% else %}—{% endif %}</div>
-    <div class="l">Origin (skip before)</div>
+    <div class="l">Poll start (older mail skipped)</div>
   </div>
   <div class="kpi">
     <div class="n" style="font-size:18px">{{ nav_sync.next_at | et("%I:%M %p ET") }}</div>
@@ -47,7 +47,7 @@
     {% endif %}
     {% if nav_sync.extracting %}<span class="tag warn">extracting {{ nav_sync.progress.index }}/{{ nav_sync.progress.total }}</span>{% endif %}
   </div>
-  <p class="lede">Push to <code>main</code> rebuilds Cloud Run. That new revision plants the cursor at deploy time, then every {{ nav_sync.interval_min }} minutes only new mail is read. Update Cloud Scheduler to <code>*/{{ nav_sync.interval_min }} * * * *</code> if the cron does not match.</p>
+  <p class="lede">A new Cloud Run revision records a Deploy row and starts polling from that moment. Status <b>ok</b> on that row means the cursor was planted, not that mail failed. Update Cloud Scheduler to <code>*/{{ nav_sync.interval_min }} * * * *</code> if the cron does not match.</p>
 </div>
 
 <div class="card">
@@ -72,7 +72,7 @@
     {% for run in poll_runs %}
     <tr>
       <td class="mono">{{ run.started_at | et("%b %d %I:%M %p") }}</td>
-      <td>{{ run.trigger }}</td>
+      <td>{% if run.trigger == 'boot' %}Deploy{% elif run.trigger == 'api' %}Scheduler{% elif run.trigger == 'loop' %}Loop{% else %}{{ run.trigger or "—" }}{% endif %}</td>
       <td class="mono">
         {% if run.window_start and run.window_end %}
           {{ run.window_start | epoch_et("%I:%M") }}–{{ run.window_end | epoch_et("%I:%M %p") }}
@@ -83,7 +83,7 @@
       <td>{{ run.skipped }}</td>
       <td>{{ run.jobs_matched }}/{{ run.jobs_found }}</td>
       <td>
-        <span class="tag {% if run.status == 'error' %}bad{% elif run.trigger == 'boot' %}{% else %}good{% endif %}">{{ run.status }}</span>
+        <span class="tag {% if run.status == 'error' %}bad{% else %}good{% endif %}">{{ run.status }}</span>
         {% if run.note %}<div class="meta">{{ run.note[:180] }}</div>{% endif %}
       </td>
     </tr>

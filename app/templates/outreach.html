@@ -1,14 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Follow-ups — Inbox Job Agent{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div>
-    <h1>Follow-ups</h1>
-    <div class="sub">Mail a real person sent you — recruiters, interviews, assessments, offers.</div>
-  </div>
-</div>
-
-<form class="toolbar" method="get" action="/outreach">
+<form class="toolbar slim" method="get" action="/outreach">
   <div class="field">
     <label>Sender</label>
     <select name="who" onchange="this.form.submit()">
@@ -31,7 +24,7 @@
       {% endfor %}
     </select>
   </div>
-  <div class="actions"><button type="submit" class="btn-primary">Filter</button></div>
+  <div class="actions"><button type="submit" class="btn-primary btn-sm">Filter</button></div>
 </form>
 
 {% if not items %}
@@ -39,35 +32,46 @@
   <div class="big">Nothing waiting on you</div>
   Recruiter pitches, interview scheduling, assessments, and offers land here. Plain “we received your application” goes to <a href="/applications">Applications</a>.
 </div>
-{% endif %}
-
-{% for item in items %}
-<div class="card hover" style="{% if item.urgency == 'high' %}border-left:3px solid var(--bad){% endif %}">
-  <div class="row">
-    <div style="min-width:0">
-      <h3>{{ item.subject or "(no subject)" }}</h3>
-      <div class="meta" style="margin-top:5px">
-        <span class="tag {% if item.kind in ('interview_invite','offer','next_step','assessment') %}good{% else %}accent{% endif %}">{{ item.kind.replace("_", " ")|title }}</span>
-        <b>{{ item.person or item.person_email }}</b>
-        {% if item.company %}<span class="sep">·</span>{{ item.company }}{% endif %}
-        {% if item.role %}<span class="sep">·</span>{{ item.role }}{% endif %}
-        {% if item.person_phone %}<span class="sep">·</span>{{ item.person_phone }}{% endif %}
-        <span class="sep">·</span><span>{{ item.received_at | et("%b %d, %I:%M %p ET") }}</span>
+{% else %}
+<div class="sheet-wrap">
+<table class="sheet">
+  <thead>
+    <tr>
+      <th>Kind</th>
+      <th>Subject</th>
+      <th>Person</th>
+      <th>Company</th>
+      <th>When</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for item in items %}
+  <tr {% if item.urgency == 'high' %}style="box-shadow:inset 3px 0 0 var(--bad)"{% endif %}>
+    <td class="tight"><span class="tag {% if item.kind in ('interview_invite','offer','next_step','assessment') %}good{% else %}accent{% endif %}">{{ item.kind.replace("_", " ")|title }}</span></td>
+    <td>
+      <b>{{ item.subject or "(no subject)" }}</b>
+      {% if item.action_required %}<div class="meta" style="color:var(--warn)">{{ item.action_required }}</div>{% endif %}
+      {% if item.summary %}<div class="meta">{{ item.summary[:140] }}</div>{% endif %}
+    </td>
+    <td class="tight">{{ item.person or item.person_email }}</td>
+    <td>{{ item.company or "—" }}{% if item.role %}<div class="meta">{{ item.role }}</div>{% endif %}</td>
+    <td class="tight mono">{{ item.received_at | et("%b %d %I:%M %p") }}</td>
+    <td>
+      <div class="cell-actions">
+        <a class="tag" href="{{ item.gmail_link }}" target="_blank" rel="noopener">Mail</a>
+        {% if item.scheduling_url %}<a class="tag accent" href="{{ item.scheduling_url }}" target="_blank" rel="noopener">Schedule</a>{% endif %}
+        {% if item.notified %}<span class="tag">notified</span>{% endif %}
+        <form method="post" action="/outreach/{{ item.id }}/handled">
+          <input type="hidden" name="redirect" value="/outreach?show={{ show }}&days={{ days }}&who={{ who }}">
+          <button type="submit" class="btn-sm {% if item.handled %}btn-ghost{% else %}btn-primary{% endif %}">{{ "Reopen" if item.handled else "Handled" }}</button>
+        </form>
       </div>
-      {% if item.summary %}<p class="lede">{{ item.summary }}</p>{% endif %}
-      {% if item.action_required %}<p class="lede" style="color:var(--warn)"><b>Action:</b> {{ item.action_required }}</p>{% endif %}
-    </div>
-    {% if item.notified %}<span class="tag">notified</span>{% endif %}
-  </div>
-  <div class="actions">
-    <a class="tag" href="{{ item.gmail_link }}" target="_blank" rel="noopener">Open mail →</a>
-    {% if item.scheduling_url %}<a class="tag accent" href="{{ item.scheduling_url }}" target="_blank" rel="noopener">Scheduling link</a>{% endif %}
-    <span class="divider"></span>
-    <form method="post" action="/outreach/{{ item.id }}/handled">
-      <input type="hidden" name="redirect" value="/outreach?show={{ show }}&days={{ days }}&who={{ who }}">
-      <button type="submit" class="btn-sm {% if item.handled %}btn-ghost{% else %}btn-primary{% endif %}">{{ "Reopen" if item.handled else "Mark handled" }}</button>
-    </form>
-  </div>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
 </div>
-{% endfor %}
+{% endif %}
 {% endblock %}

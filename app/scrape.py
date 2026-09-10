@@ -35,6 +35,16 @@ GOOGLEBOT_HEADERS = {
 }
 
 LINKEDIN_GUEST = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+JINA_READER = "https://r.jina.ai/"
+# These boards require a logged-in browser. HTTP fetch will keep failing; score from the email instead.
+LOGIN_WALL_HOSTS = (
+    "linkedin.com",
+    "indeed.com",
+    "glassdoor.com",
+    "ziprecruiter.com",
+    "monster.com",
+    "dice.com",
+)
 GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards/{board}/jobs/{job_id}?content=true"
 LEVER_API = "https://api.lever.co/v0/postings/{company}/{job_id}?mode=json"
 ASHBY_API = "https://api.ashbyhq.com/posting-api/job-board/{board}?includeCompensation=true"
@@ -544,6 +554,62 @@ def _api_target(candidate: JobCandidate) -> tuple[str, str]:
     return url, "html"
 
 
+def login_wall_host(url: str) -> bool:
+    host = (urlparse(url or "").netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return any(host == item or host.endswith("." + item) for item in LOGIN_WALL_HOSTS)
+
+
+def notable_scrape_failures(scraped: dict[str, ScrapedJob]) -> list[ScrapedJob]:
+    """Login walls are expected. Only unexpected blocked/error fetches belong on Issues."""
+    out: list[ScrapedJob] = []
+    for page in scraped.values():
+        if getattr(page, "status", "") not in {"error", "blocked"}:
+            continue
+        url = getattr(page, "final_url", "") or ""
+        if page.status == "blocked" and login_wall_host(url):
+            continue
+        out.append(page)
+    return out
+
+
+def _try_reader(client: httpx.Client, candidate: JobCandidate) -> ScrapedJob | None:
+    """Last resort for company sites that 403 a normal browser UA. Skip login-wall boards."""
+    url = unwrap_url(candidate.url)
+    if not url or login_wall_host(url):
+        return None
+    resp = _get(client, JINA_READER + url, HEADERS)
+    if resp is None or resp.status_code >= 400 or len(resp.text or "") < 200:
+        return None
+    if BLOCKED_NOISE.search(resp.text[:2000]):
+        return None
+    text = html_to_text(resp.text) if "<html" in resp.text[:200].lower() else clean_text(resp.text)
+    if len(text) < 80:
+        return None
+    job = ScrapedJob(
+        title=(candidate.title or "")[:200],
+        company=(candidate.company or "")[:150],
+        location=(candidate.location or "")[:150],
+        description=text[:20000],
+        ok=True,
+        status="ok",
+        extraction="reader",
+        final_url=url,
+    )
+    _fill_listing_fields(job, candidate)
+    return job
+
+
+def _maybe_reader(client: httpx.Client, candidate: JobCandidate, job: ScrapedJob) -> ScrapedJob:
+    if job.ok and not job.is_thin():
+        return job
+    better = _try_reader(client, candidate)
+    if better and len(better.description) > len(job.description or ""):
+        return better
+    return job
+
+
 def _get(client: httpx.Client, url: str, headers: dict) -> httpx.Response | None:
     try:
         return client.get(url, headers=headers)
@@ -576,7 +642,9 @@ def fetch_job(candidate: JobCandidate, timeout: int = 15) -> ScrapedJob:
             resp = _get(client, url, HEADERS)
 
         if resp is None:
-            return ScrapedJob(status="error", extraction="", final_url=url)
+            return _maybe_reader(
+                client, candidate, ScrapedJob(status="error", extraction="", final_url=url or original)
+            )
 
         if resp.status_code in (401, 403, 429, 451, 999) or not resp.text.strip():
             hop = interstitial_destination(resp.text or "", str(resp.url))
@@ -590,7 +658,11 @@ def fetch_job(candidate: JobCandidate, timeout: int = 15) -> ScrapedJob:
                     resp, kind = retry, "html"
                 else:
                     status = "blocked" if resp.status_code in (401, 403, 429, 451, 999) else "empty"
-                    return ScrapedJob(status=status, final_url=str(resp.url))
+                    return _maybe_reader(
+                        client,
+                        candidate,
+                        ScrapedJob(status=status, final_url=str(resp.url)),
+                    )
 
         hop = interstitial_destination(resp.text, str(resp.url))
         if hop and hop.split("?", 1)[0] != str(resp.url).split("?", 1)[0]:
@@ -636,7 +708,11 @@ def fetch_job(candidate: JobCandidate, timeout: int = 15) -> ScrapedJob:
                 soup = BeautifulSoup(resp.text, "lxml")
                 job = _from_jsonld(soup) or _from_html(soup)
             else:
-                return ScrapedJob(status="error", final_url=str(resp.url) if resp is not None else url)
+                return _maybe_reader(
+                    client,
+                    candidate,
+                    ScrapedJob(status="error", final_url=str(resp.url) if resp is not None else url),
+                )
 
         job.final_url = str(resp.url)
 
@@ -654,7 +730,7 @@ def fetch_job(candidate: JobCandidate, timeout: int = 15) -> ScrapedJob:
             job.ok = len(job.description) > 40
             job.status = "ok" if job.ok else "empty"
         _fill_listing_fields(job, candidate)
-        return job
+        return _maybe_reader(client, candidate, job)
 
 
 def llm_extract(page_text: str, llm, candidate: JobCandidate) -> ScrapedJob | None:

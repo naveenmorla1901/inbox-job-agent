@@ -297,7 +297,7 @@ def login(key: str = Form(...)):
 def mail_page(
     request: Request,
     session: Session = Depends(db_session),
-    days: int = 2,
+    days: int = 1,
     category: str = "",
     q: str = "",
     has: str = "",
@@ -1087,7 +1087,7 @@ def preview_page(days: int = 1, hours: int = 0):
 
 
 @app.get("/messages", response_class=HTMLResponse)
-def messages_page(days: int = 2, category: str = ""):
+def messages_page(days: int = 1, category: str = ""):
     qs = f"days={days}"
     if category:
         qs += f"&category={category}"

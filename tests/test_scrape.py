@@ -260,3 +260,56 @@ def test_blocked_adzuna_page_follows_the_click_here_link(monkeypatch):
     )
     assert job.ok
     assert "AI Engineer" in job.title
+
+
+def test_login_wall_host_detects_linkedin_and_indeed():
+    from app.scrape import login_wall_host, notable_scrape_failures, ScrapedJob
+
+    assert login_wall_host("https://www.linkedin.com/jobs/view/123")
+    assert login_wall_host("https://www.indeed.com/viewjob?jk=abc")
+    assert not login_wall_host("https://jobs.example.com/ai-engineer")
+    walls = {
+        "a": ScrapedJob(status="blocked", final_url="https://www.linkedin.com/jobs/view/123"),
+        "b": ScrapedJob(status="blocked", final_url="https://www.indeed.com/viewjob?jk=x"),
+        "c": ScrapedJob(status="error", final_url="https://careers.example.com/job/9"),
+    }
+    notable = notable_scrape_failures(walls)
+    assert len(notable) == 1
+    assert notable[0].final_url.endswith("/job/9")
+
+
+def test_reader_fallback_recovers_a_blocked_company_site(monkeypatch):
+    from app.extract_jobs import JobCandidate
+    from app.scrape import UA, fetch_job
+    from app import scrape as scrape_mod
+
+    posting = (
+        "AI Engineer at Acme. Build models in Python and SQL. "
+        + ("machine learning " * 40)
+    )
+
+    class Fake:
+        def __init__(self, status, text, url):
+            self.status_code = status
+            self.text = text
+            self.url = url
+            self.request = type("Req", (), {"headers": {"user-agent": UA}})()
+
+    def fake_get(_client, url, _headers):
+        if url.startswith("https://r.jina.ai/"):
+            return Fake(200, posting, url)
+        return Fake(403, "Access denied", url)
+
+    monkeypatch.setattr(scrape_mod, "_get", fake_get)
+    job = fetch_job(
+        JobCandidate(
+            url="https://jobs.example.com/ai-engineer",
+            url_key="html:jobs.example.com/ai-engineer",
+            title="AI Engineer",
+            company="Acme",
+            source="example",
+        )
+    )
+    assert job.ok
+    assert job.extraction == "reader"
+    assert "Python" in job.description
