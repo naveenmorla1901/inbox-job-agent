@@ -296,6 +296,9 @@
       <a href="/flags" class="{% if request.url.path.startswith('/flags') %}active{% endif %}">
         Flags{% if nav_flags %}<span class="count-badge">{{ nav_flags }}</span>{% endif %}
       </a>
+      <a href="/misses" class="{% if request.url.path.startswith('/misses') %}active{% endif %}">
+        Misses{% if nav_misses %}<span class="count-badge">{{ nav_misses }}</span>{% endif %}
+      </a>
     </nav>
     {% if request.url.path != '/login' %}
     <span class="sync" title="{{ nav_sync.interval_min }}-minute windows from boot/deploy. Mail before origin is skipped.">

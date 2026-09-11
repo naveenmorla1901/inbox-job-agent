@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Misses — Inbox Job Agent{% endblock %}
+{% block content %}
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+<div class="page-head">
+  <div>
+    <h1>Extract misses</h1>
+    <div class="sub">Emails you marked as extracted wrong. One file per message — reporting again updates it instead of duplicating. Download JSON for extractor work, or run <code>python -m app.run pull-misses</code> locally.</div>
+  </div>
+  {% if misses %}
+  <a class="btn-sm" href="/misses/export.jsonl">Download all (JSONL)</a>
+  {% endif %}
+</div>
+
+{% if not misses %}
+<div class="empty">
+  <div class="big">No misses yet</div>
+  Open an email on Mail, type what you expected (optional), and click Report miss.
+</div>
+{% else %}
+<table class="compact">
+  <thead>
+    <tr>
+      <th>When</th>
+      <th>Times</th>
+      <th>What's wrong</th>
+      <th>Subject</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for item in misses %}
+  <tr>
+    <td class="mono">{{ item.reported_at | et("%b %d, %I:%M %p ET") }}</td>
+    <td>{{ item.report_count }}</td>
+    <td>
+      <div class="tags">
+        {% for tag in (item.problems or "").split(",") if tag %}
+        <span class="tag warn">{{ tag }}</span>
+        {% endfor %}
+      </div>
+      {% if item.note %}<div class="meta" style="margin-top:4px">{{ item.note[:180] }}</div>{% endif %}
+    </td>
+    <td>
+      <a href="/?m={{ item.message_id }}&days=30"><b>{{ item.subject[:90] or "(no subject)" }}</b></a>
+      <div class="meta">{{ item.sender }} · {{ item.category }}</div>
+    </td>
+    <td><a class="tag" href="/misses/{{ item.message_id }}.json">JSON</a></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

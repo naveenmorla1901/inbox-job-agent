@@ -144,6 +144,25 @@ class State(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class ExtractMiss(SQLModel, table=True):
+    """One user-flagged extraction (or classification) failure, keyed by Gmail message id.
+
+    Repeat reports on the same email upsert this row instead of creating a duplicate.
+    Survives inbox cache clears so the set stays useful for extractor work.
+    """
+
+    message_id: str = Field(primary_key=True)
+    first_reported_at: datetime = Field(default_factory=utcnow)
+    reported_at: datetime = Field(default_factory=utcnow, index=True)
+    report_count: int = 1
+    subject: str = ""
+    sender: str = ""
+    category: str = ""
+    note: str = Field(default="", sa_column=Column(Text))
+    problems: str = Field(default="", index=True)
+    payload: str = Field(default="", sa_column=Column(Text))
+
+
 class Issue(SQLModel, table=True):
     """Gmail / LLM / scrape / poll failure the dashboard can show with a timestamp."""
 

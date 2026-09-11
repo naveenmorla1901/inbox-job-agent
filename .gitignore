@@ -1,6 +1,7 @@
 .env
 secrets/
 data/
+extract-misses/*.json
 *.db
 *.sqlite3
 __pycache__/

@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import time
+from pathlib import Path
 
 from .config import get_profile, get_settings
 from .db import init_db, session_scope, set_state
@@ -193,6 +194,17 @@ def cmd_eval_extract(args: argparse.Namespace) -> None:
     run_eval_extract(since=args.since, message_id=args.one)
 
 
+def cmd_pull_misses(args: argparse.Namespace) -> None:
+    """Dump user-flagged extract misses from the DB into extract-misses/."""
+    from .extract_miss import dump_misses, miss_dir
+
+    init_db()
+    dest = Path(args.dir) if getattr(args, "dir", "") else miss_dir()
+    with session_scope() as session:
+        paths = dump_misses(session, dest)
+    print(f"wrote {len(paths)} miss file(s) to {dest}")
+
+
 def cmd_match(args: argparse.Namespace) -> None:
     """Score arbitrary text against the profile, to tune weights without touching Gmail."""
     from .matcher import match_job
@@ -288,6 +300,17 @@ def main() -> None:
         help="Gmail message id to fetch and extract (writes data/eval/{id}.json)",
     )
     eval_cmd.set_defaults(func=cmd_eval_extract)
+
+    misses_cmd = sub.add_parser(
+        "pull-misses",
+        help="dump flagged extract misses from the DB into extract-misses/*.json",
+    )
+    misses_cmd.add_argument(
+        "--dir",
+        default="",
+        help="output directory (default: extract-misses/ next to the repo)",
+    )
+    misses_cmd.set_defaults(func=cmd_pull_misses)
 
     args = parser.parse_args()
     args.func(args)

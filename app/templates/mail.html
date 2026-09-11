@@ -107,10 +107,14 @@
           <input type="hidden" name="redirect" value="/?{{ mail_qs() }}">
           <button type="submit" class="btn-sm">Re-extract this email</button>
         </form>
-        <form method="post" action="/mail/{{ selected.id }}/miss">
+        <form method="post" action="/mail/{{ selected.id }}/miss" class="row" style="gap:8px; align-items:center; margin:0">
           <input type="hidden" name="redirect" value="/?{{ mail_qs() }}">
+          <input type="text" name="note" placeholder="What's wrong? e.g. expected 12 jobs, only 5" maxlength="500" style="min-width:220px; max-width:340px">
           <button type="submit" class="btn-sm btn-ghost">Report miss</button>
         </form>
+        {% if extract_miss %}
+        <a class="tag warn" href="/misses">Reported {{ extract_miss.report_count }}× → Misses</a>
+        {% endif %}
         <form method="post" action="/mail/{{ selected.id }}/flag" class="row" style="gap:8px; align-items:center; margin:0">
           <input type="hidden" name="redirect" value="/?{{ mail_qs() }}">
           <select name="category">

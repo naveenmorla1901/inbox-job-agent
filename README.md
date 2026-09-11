@@ -79,7 +79,8 @@ The dashboard has these pages:
 | **Matches** | Roles that fit your profile, grouped by day, with the source email |
 | **Follow-ups** | Mail an actual person sent you: recruiters, interview scheduling, assessments, offers |
 | **Applications** | One row per role you applied to, with its status and mail timeline |
-| **Run** | Check Gmail now, or start fresh |
+| **Flags** | Mail you marked as the wrong category |
+| **Misses** | Emails whose extraction looked wrong — download JSON for extractor work |
 
 An application appears automatically when a confirmation email arrives ("thank you for applying to
 X at Y"), or the moment you press **applied** on a posting. After that, every interview invite,

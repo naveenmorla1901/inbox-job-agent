@@ -11,14 +11,14 @@ from app.config import get_settings
 from app.gmail_client import parse_gmail_push
 from app.llm import LLM
 from app.main import app
-from app.models import Application, Issue, Job, Message, Outreach
+from app.models import Application, ExtractMiss, Issue, Job, Message, Outreach
 from app.pipeline import STATE_CURSOR, process_email
 from app.timefmt import et_day_label, group_by_et_day
 from tests.test_extract import alert_email
 
 
 @pytest.fixture()
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -30,6 +30,7 @@ def client(monkeypatch):
     monkeypatch.setattr(get_settings(), "api_token", "change-me", raising=False)
     monkeypatch.setattr(get_settings(), "scrape_job_pages", False, raising=False)
     monkeypatch.setattr(get_settings(), "llm_provider", "none", raising=False)
+    monkeypatch.setattr("app.extract_miss.miss_dir", lambda: tmp_path / "extract-misses")
     with TestClient(app) as test_client:
         yield test_client, engine
 
@@ -352,22 +353,105 @@ def test_parsed_not_stored_shows_on_analysis(client):
     assert b"Deloitte is interested in you" in filtered.content
 
 
-def test_report_miss_lands_on_issues(client):
+def test_report_miss_upserts_one_file(client):
     test_client, engine = client
     with Session(engine) as session:
-        session.add(Message(id="miss1", subject="Apple jobs", category="other", jobs_found=4))
+        session.add(
+            Message(
+                id="miss1",
+                subject="Apple jobs",
+                category="other",
+                jobs_found=4,
+                extract_json='{"candidates":[{"title":"SWE","company":"Apple","url":""}]}',
+            )
+        )
         session.commit()
-    response = test_client.post(
+    first = test_client.post(
         "/mail/miss1/miss",
-        data={"redirect": "/?m=miss1&days=30"},
+        data={"redirect": "/?m=miss1&days=30", "note": "expected 12 jobs, only 4"},
         follow_redirects=False,
     )
-    assert response.status_code == 303
+    assert first.status_code == 303
+    second = test_client.post(
+        "/mail/miss1/miss",
+        data={"redirect": "/?m=miss1&days=30", "note": "still missing internships"},
+        follow_redirects=False,
+    )
+    assert second.status_code == 303
     with Session(engine) as session:
+        rows = session.exec(select(ExtractMiss)).all()
+        assert len(rows) == 1
+        assert rows[0].report_count == 2
+        assert "expected 12 jobs" in rows[0].note
+        assert "still missing internships" in rows[0].note
         issue = session.exec(select(Issue)).first()
         assert issue is not None
         assert "Extraction miss" in issue.title
         assert issue.message_id == "miss1"
+    page = test_client.get("/misses")
+    assert page.status_code == 200
+    assert b"Apple jobs" in page.content
+    assert b"parsed_not_stored" in page.content
+    download = test_client.get("/misses/miss1.json")
+    assert download.status_code == 200
+    payload = download.json()
+    assert payload["message_id"] == "miss1"
+    assert payload["extracted"]["titles"] == ["SWE"]
+    export = test_client.get("/misses/export.jsonl")
+    assert export.status_code == 200
+    lines = [line for line in export.text.splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert json.loads(lines[0])["message_id"] == "miss1"
+
+
+def test_job_miss_updates_the_parent_email_file(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        session.add(Message(id="jm1", subject="Digest", category="job_alert", jobs_found=1))
+        session.flush()
+        session.add(
+            Job(
+                message_id="jm1",
+                url_key="jm1-job",
+                title="Staff Engineer",
+                company="Acme",
+                scrape_status="empty",
+                description="",
+            )
+        )
+        session.commit()
+    response = test_client.post(
+        "/job/1/miss",
+        data={"note": "description empty", "redirect": "/job/1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with Session(engine) as session:
+        miss = session.get(ExtractMiss, "jm1")
+        assert miss is not None
+        assert "missing_job_content" in miss.problems
+        assert "description empty" in miss.note
+        payload = json.loads(miss.payload)
+        assert payload["extra"]["job_id"] == 1
+
+
+def test_flag_also_writes_an_extract_miss(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        session.add(Message(id="flag1", subject="Recruiter ping", category="other"))
+        session.commit()
+    response = test_client.post(
+        "/mail/flag1/flag",
+        data={"category": "recruiter_outreach", "redirect": "/"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with Session(engine) as session:
+        miss = session.get(ExtractMiss, "flag1")
+        assert miss is not None
+        assert miss.report_count == 1
+        assert "wrong_category" in miss.problems
+
 
 
 def test_applications_label_blank_roles_as_unknown(client):

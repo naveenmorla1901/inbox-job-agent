@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -9,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, col, func, select
 
@@ -25,7 +26,8 @@ from .config import ROOT, get_profile, get_settings
 from .db import get_engine, init_db
 from .gmail_client import gmail_token_status, host_setup, parse_gmail_push
 from .issues import issue_counts, latest_by_source, recent_issues
-from .models import Application, ApplicationEvent, Job, Message, Outreach
+from .extract_miss import list_misses, miss_count, upsert_extract_miss
+from .models import Application, ApplicationEvent, ExtractMiss, Job, Message, Outreach
 from .pipeline import (
     clear_inbox,
     count_purge_window,
@@ -126,6 +128,7 @@ def _template_nav(_request: Request) -> dict:
     origin = 0
     open_errors = 0
     open_flags = 0
+    open_misses = 0
     interval = max(60, settings.poll_interval_seconds)
     now = datetime.now(timezone.utc)
     try:
@@ -140,6 +143,7 @@ def _template_nav(_request: Request) -> dict:
                 .select_from(Message)
                 .where(Message.flagged_category != "")
             ).one()
+            open_misses = miss_count(session)
     except Exception:
         pass
     if origin:
@@ -152,6 +156,7 @@ def _template_nav(_request: Request) -> dict:
         "nav_pending": pending,
         "nav_errors": open_errors,
         "nav_flags": int(open_flags or 0),
+        "nav_misses": int(open_misses or 0),
         "nav_sync": {
             "auto": settings.auto_poll,
             "interval_min": max(1, interval // 60),
@@ -413,6 +418,7 @@ def mail_page(
             "mail_jobs": sum(len(rows) for rows in jobs_by_mail.values()),
             "mail_matches": sum(matched_by_mail.values()),
             "mail_qs": mail_qs,
+            "extract_miss": session.get(ExtractMiss, selected.id) if selected else None,
         },
     )
 
@@ -888,12 +894,22 @@ def flag_mail(
         row.flagged_at = None
         flash = "Flag cleared."
     else:
+        was = row.category
         row.flagged_category = category
         row.flagged_at = datetime.now(timezone.utc)
         flash = f"Flagged as {CATEGORY_LABELS.get(category, category)}."
         if apply:
             row.category = category
             flash = f"Set category to {CATEGORY_LABELS.get(category, category)}."
+        try:
+            upsert_extract_miss(
+                session,
+                row,
+                note=f"flagged_category={category} (was {was})",
+                source="flag",
+            )
+        except Exception:
+            log.exception("could not store extract miss for flag %s", message_id)
     session.add(row)
     session.commit()
     dest = safe_next(redirect, "/")
@@ -932,12 +948,15 @@ def report_extract_miss(
     request: Request,
     session: Session = Depends(db_session),
     redirect: str = Form("/"),
+    note: str = Form(""),
 ):
-    """Keep the email for later. Parser output and stored jobs disagree, or the body is blank."""
+    """Save a structured miss file for this email. Repeat clicks update the same record."""
     require_token(request)
     row = session.get(Message, message_id)
     if not row:
         raise HTTPException(404, "message not found")
+    miss = upsert_extract_miss(session, row, note=note, source="mail")
+    session.commit()
     from .issues import record_issue
 
     payload = parse_extract_payload(row.extract_json)
@@ -948,13 +967,56 @@ def report_extract_miss(
         (
             f"category={row.category} jobs_found={row.jobs_found} "
             f"raw_rows={len(payload)} body_chars={len(row.body_text or '')}\n"
-            f"titles: {titles}\n{(row.body_text or '')[:1500]}"
+            f"titles: {titles}\nnote={note}\n{(row.body_text or '')[:1500]}"
         ),
         severity="warn",
         message_id=row.id,
     )
-    flash = "Logged on Issues as an extraction miss. Re-extract still tries Gmail again."
+    times = miss.report_count
+    flash = (
+        f"Saved extract miss ({times} report{'s' if times != 1 else ''} on this email). "
+        "Same message stays one file. Open Misses to download it."
+    )
     dest = safe_next(redirect, f"/?m={message_id}")
+    sep = "&" if "?" in dest else "?"
+    return RedirectResponse(f"{dest}{sep}{urlencode({'flash': flash})}", status_code=303)
+
+
+@app.post("/job/{job_id}/miss")
+def report_job_miss(
+    job_id: int,
+    request: Request,
+    session: Session = Depends(db_session),
+    redirect: str = Form(""),
+    note: str = Form(""),
+):
+    """Flag a posting whose scraped content looks wrong. Upserts the parent email's miss."""
+    require_token(request)
+    job = session.get(Job, job_id)
+    if not job:
+        raise HTTPException(404, "job not found")
+    row = session.get(Message, job.message_id)
+    if not row:
+        raise HTTPException(404, "message not found")
+    detail = (
+        f"job_id={job.id} title={job.title or '?'} scrape={job.scrape_status or '?'} "
+        f"extraction={job.extraction or '?'} desc_chars={len(job.description or '')}"
+    )
+    user_note = (note or "").strip()
+    combined = f"{detail}\n{user_note}".strip() if user_note else detail
+    miss = upsert_extract_miss(
+        session,
+        row,
+        note=combined,
+        source="job",
+        extra={"job_id": job.id, "job_url": job.url, "scrape_status": job.scrape_status},
+    )
+    session.commit()
+    flash = (
+        f"Saved extract miss for this posting ({miss.report_count} report"
+        f"{'s' if miss.report_count != 1 else ''} on the source email)."
+    )
+    dest = safe_next(redirect or f"/job/{job.id}", f"/job/{job.id}")
     sep = "&" if "?" in dest else "?"
     return RedirectResponse(f"{dest}{sep}{urlencode({'flash': flash})}", status_code=303)
 
@@ -977,6 +1039,49 @@ def rescrape_job_page(
     dest = safe_next(redirect or f"/job/{job.id}", f"/job/{job.id}")
     sep = "&" if "?" in dest else "?"
     return RedirectResponse(f"{dest}{sep}{urlencode({'flash': flash})}", status_code=303)
+
+
+@app.get("/misses", response_class=HTMLResponse)
+def misses_page(request: Request, session: Session = Depends(db_session), flash: str = ""):
+    return templates.TemplateResponse(
+        request,
+        "misses.html",
+        {"misses": list_misses(session), "flash": flash},
+    )
+
+
+@app.get("/misses/export.jsonl")
+def export_misses(request: Request, session: Session = Depends(db_session)):
+    require_token(request)
+    lines = []
+    for row in list_misses(session, limit=2000):
+        try:
+            obj = json.loads(row.payload) if row.payload else {"message_id": row.message_id}
+        except json.JSONDecodeError:
+            obj = {"message_id": row.message_id, "payload": row.payload}
+        if not isinstance(obj, dict):
+            obj = {"message_id": row.message_id, "payload": obj}
+        lines.append(json.dumps(obj, ensure_ascii=False))
+    body = "\n".join(lines) + ("\n" if lines else "")
+    return Response(
+        content=body,
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": 'attachment; filename="extract-misses.jsonl"'},
+    )
+
+
+@app.get("/misses/{message_id}.json")
+def download_miss(message_id: str, request: Request, session: Session = Depends(db_session)):
+    require_token(request)
+    row = session.get(ExtractMiss, message_id)
+    if not row:
+        raise HTTPException(404, "miss not found")
+    filename = f"{message_id}.json"
+    return Response(
+        content=row.payload or "{}",
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/flags", response_class=HTMLResponse)

@@ -44,6 +44,11 @@
       <button type="submit" class="btn-sm">Retry fetch</button>
     </form>
     {% endif %}
+    <form method="post" action="/job/{{ job.id }}/miss" class="row" style="gap:8px; align-items:center; margin:0">
+      <input type="hidden" name="redirect" value="/job/{{ job.id }}">
+      <input type="text" name="note" placeholder="What's wrong? e.g. description empty" maxlength="500" style="min-width:200px">
+      <button type="submit" class="btn-sm btn-ghost">Report miss</button>
+    </form>
     <span class="divider"></span>
     {% for action in ["saved", "applied", "ignored", "new"] if action != job.status %}
     <form method="post" action="/job/{{ job.id }}/status">
