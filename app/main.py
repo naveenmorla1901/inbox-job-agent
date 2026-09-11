@@ -29,7 +29,7 @@ from .models import Application, ApplicationEvent, Job, Message, Outreach
 from .pipeline import (
     clear_inbox,
     count_purge_window,
-    email_from_message,
+    email_for_reextract,
     ensure_poll_origin,
     load_last_run,
     load_poll_origin,
@@ -268,6 +268,10 @@ def mail_bundle(
         stmt = stmt.where(
             col(Message.category).in_([JOB_ALERT]), Message.jobs_found == 0
         )
+    elif has == "unstored":
+        # Parser found postings (raw extract) but they never became Job rows.
+        stored = select(Job.message_id)
+        stmt = stmt.where(Message.jobs_found > 0, col(Message.id).not_in(stored))
     elif has == "followups":
         stmt = stmt.where(col(Message.category).in_(FOLLOW_UP_KINDS))
     elif has == "other":
@@ -348,6 +352,9 @@ def mail_page(
     empty_alerts = sum(
         1 for row in messages if row.category == JOB_ALERT and not row.jobs_found
     )
+    unstored_extracts = sum(
+        1 for row in messages if row.jobs_found and not jobs_by_mail.get(row.id)
+    )
 
     def mail_qs(**overrides) -> str:
         params = {
@@ -402,6 +409,7 @@ def mail_page(
             "category_order": CATEGORY_ORDER,
             "category_counts": category_counts,
             "empty_alerts": empty_alerts,
+            "unstored_extracts": unstored_extracts,
             "mail_jobs": sum(len(rows) for rows in jobs_by_mail.values()),
             "mail_matches": sum(matched_by_mail.values()),
             "mail_qs": mail_qs,
@@ -906,13 +914,47 @@ def reextract_mail(
         raise HTTPException(404, "message not found")
     from .llm import LLM
 
-    outcome = reextract_email(session, email_from_message(row), LLM())
+    outcome = reextract_email(session, email_for_reextract(row), LLM())
     session.commit()
+    stored = len(outcome.jobs)
     flash = (
-        f"Re-extracted this email: {outcome.jobs_found} posting(s), "
-        f"{len(outcome.matched_jobs)} match."
+        f"Re-extracted this email: {outcome.jobs_found} posting(s) parsed, "
+        f"{stored} stored, {len(outcome.matched_jobs)} match."
     )
     dest = safe_next(redirect, f"/?m={message_id}&days=30")
+    sep = "&" if "?" in dest else "?"
+    return RedirectResponse(f"{dest}{sep}{urlencode({'flash': flash})}", status_code=303)
+
+
+@app.post("/mail/{message_id}/miss")
+def report_extract_miss(
+    message_id: str,
+    request: Request,
+    session: Session = Depends(db_session),
+    redirect: str = Form("/"),
+):
+    """Keep the email for later. Parser output and stored jobs disagree, or the body is blank."""
+    require_token(request)
+    row = session.get(Message, message_id)
+    if not row:
+        raise HTTPException(404, "message not found")
+    from .issues import record_issue
+
+    payload = parse_extract_payload(row.extract_json)
+    titles = ", ".join((item.get("title") or "?")[:40] for item in payload[:12]) or "(none)"
+    record_issue(
+        "extract",
+        f"Extraction miss: {(row.subject or '(no subject)')[:80]}",
+        (
+            f"category={row.category} jobs_found={row.jobs_found} "
+            f"raw_rows={len(payload)} body_chars={len(row.body_text or '')}\n"
+            f"titles: {titles}\n{(row.body_text or '')[:1500]}"
+        ),
+        severity="warn",
+        message_id=row.id,
+    )
+    flash = "Logged on Issues as an extraction miss. Re-extract still tries Gmail again."
+    dest = safe_next(redirect, f"/?m={message_id}")
     sep = "&" if "?" in dest else "?"
     return RedirectResponse(f"{dest}{sep}{urlencode({'flash': flash})}", status_code=303)
 

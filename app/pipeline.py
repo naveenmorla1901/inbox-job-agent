@@ -775,9 +775,17 @@ def _should_store_jobs(result: Classification, candidates: list[JobCandidate]) -
         return False
     if result.category == JOB_ALERT:
         return True
-    if result.category in (APPLICATION_UPDATE, OTHER) and len(candidates) >= 1:
-        sources = {c.source for c in candidates if c.source}
-        return bool(sources)
+    titled = [c for c in candidates if (c.title or "").strip()]
+    if result.category == OTHER:
+        # Career-site blasts land here when the subject looks nothing like an alert.
+        # Requiring a *known* source used to drop them whole: jobs.apple.com and
+        # ukgjobalerts.com are not on our host list, and a role the LLM read out of
+        # the body has no link of its own at all.
+        return bool(titled)
+    if result.category == APPLICATION_UPDATE:
+        # A receipt's own role name is the application's, not an open posting, so it
+        # stays with the tracker. Only a real link ("similar jobs") becomes a row.
+        return any(c.source or c.url for c in titled)
     return False
 
 
@@ -887,8 +895,27 @@ def reextract_email(session: Session, email: ParsedEmail, llm: LLM) -> EmailResu
     )
 
 
+def email_for_reextract(record: Message) -> ParsedEmail:
+    """The original email if Gmail still has it, else the stored reconstruction.
+
+    Going back to Gmail matters: `email_from_message` rebuilds the body out of the
+    candidates we already claimed, so on its own a re-extract can only re-find what
+    the first pass found. Re-extraction exists to fix misses, which means it has to
+    see the parts of the email we missed.
+    """
+    try:
+        gmail = GmailClient(get_settings())
+        return parse_message(gmail.get_message(record.id))
+    except Exception as exc:  # no Gmail auth, message deleted, API down
+        log.warning("re-extract fell back to the stored copy of %s: %s", record.id, exc)
+        return email_from_message(record)
+
+
 def email_from_message(record: Message) -> ParsedEmail:
-    """Rebuild enough of the original email to re-extract without calling Gmail."""
+    """Rebuild an email from what we stored. Lossy: only the claimed candidates
+    survive, so anything the first pass missed is missing here too. Prefer
+    `email_for_reextract`.
+    """
     payload = parse_extract_payload(record.extract_json)
     links: list[Link] = []
     html_bits: list[str] = []

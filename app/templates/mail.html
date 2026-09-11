@@ -32,6 +32,7 @@
       <option value="" {% if not has %}selected{% endif %}>Anything</option>
       <option value="jobs" {% if has == "jobs" %}selected{% endif %}>Job postings</option>
       <option value="norows" {% if has == "norows" %}selected{% endif %}>Alerts with no postings</option>
+      <option value="unstored" {% if has == "unstored" %}selected{% endif %}>Parsed, not stored</option>
       <option value="followups" {% if has == "followups" %}selected{% endif %}>Follow-ups</option>
       <option value="other" {% if has == "other" %}selected{% endif %}>Unclassified</option>
     </select>
@@ -45,6 +46,9 @@
   <span class="tag good">{{ mail_matches }} match{{ "es" if mail_matches != 1 else "" }}</span>
   {% if empty_alerts %}
   <a class="tag {% if has == 'norows' %}accent{% else %}warn{% endif %}" href="/?{{ mail_qs(has='norows', m='') }}">Alerts with no postings · {{ empty_alerts }}</a>
+  {% endif %}
+  {% if unstored_extracts %}
+  <a class="tag {% if has == 'unstored' %}accent{% else %}warn{% endif %}" href="/?{{ mail_qs(has='unstored', m='') }}">Parsed, not stored · {{ unstored_extracts }}</a>
   {% endif %}
   {% for key in category_order if category_counts.get(key) %}
   <a class="tag {% if category == key %}accent{% endif %}" href="/?{{ mail_qs(category=key, m='') }}">{{ category_labels.get(key, key) }} · {{ category_counts[key] }}</a>
@@ -103,6 +107,10 @@
           <input type="hidden" name="redirect" value="/?{{ mail_qs() }}">
           <button type="submit" class="btn-sm">Re-extract this email</button>
         </form>
+        <form method="post" action="/mail/{{ selected.id }}/miss">
+          <input type="hidden" name="redirect" value="/?{{ mail_qs() }}">
+          <button type="submit" class="btn-sm btn-ghost">Report miss</button>
+        </form>
         <form method="post" action="/mail/{{ selected.id }}/flag" class="row" style="gap:8px; align-items:center; margin:0">
           <input type="hidden" name="redirect" value="/?{{ mail_qs() }}">
           <select name="category">
@@ -160,7 +168,12 @@
           </div>
           <div class="extract-col">
             <h3>Email text</h3>
-            <pre>{{ selected.body_text or selected.snippet or "(no stored body — open Gmail to compare)" }}</pre>
+            {% if selected.body_text %}
+            <pre>{{ selected.body_text }}</pre>
+            {% else %}
+            <p class="lede">Nothing stored. Older mail often kept only a stub. <b>Re-extract this email</b> reloads the real body from Gmail, then runs the parser again.</p>
+            {% if selected.snippet %}<pre>{{ selected.snippet }}</pre>{% endif %}
+            {% endif %}
           </div>
         </div>
         {% else %}
@@ -198,8 +211,27 @@
         </div>
 
         <h3 style="margin:12px 0 6px; font-size:13px">Extracted postings</h3>
-        {% if not jobs %}
-        <p class="lede" style="margin:0">Nothing exploded into job rows. Open <b>Raw extract</b> to see what the parser returned.</p>
+        {% if not jobs and raw_extract %}
+        <p class="lede" style="margin:0 0 8px">The parser found {{ raw_extract|length }} posting(s), but they were never stored as job rows (usually because the email was classified as {{ category_labels.get(selected.category, selected.category) }}, not a job alert). <b>Re-extract this email</b> stores them. Same list as Raw extract.</p>
+        <table class="compact sheet">
+          <thead><tr><th>#</th><th>Role</th><th>Company</th><th>Location</th><th>Source</th></tr></thead>
+          <tbody>
+          {% for row in raw_extract %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>
+              <b>{{ row.title or "Untitled role" }}</b>
+              {% if row.url %}<div><a class="joblink" href="{{ row.url }}" target="_blank" rel="noopener">{{ row.url[:90] }}</a></div>{% endif %}
+            </td>
+            <td>{{ row.company or "—" }}</td>
+            <td>{{ row.location or "—" }}</td>
+            <td>{{ row.source or "—" }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% elif not jobs %}
+        <p class="lede" style="margin:0">Nothing exploded into job rows. Open <b>Raw extract</b> to see what the parser returned, or use <b>Re-extract this email</b>.</p>
         {% else %}
         <table class="compact sheet">
           <thead>

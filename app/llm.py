@@ -64,7 +64,7 @@ PROVIDERS: dict[str, Provider] = {
         "groq",
         "https://api.groq.com/openai/v1/chat/completions",
         "groq_api_key",
-        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
     ),
     "deepseek": Provider(
         "deepseek",
@@ -83,7 +83,7 @@ PROVIDERS: dict[str, Provider] = {
         "openrouter",
         "https://openrouter.ai/api/v1/chat/completions",
         "openrouter_api_key",
-        "openai/gpt-oss-20b:free",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
     ),
     "ollama": Provider(
         "ollama",

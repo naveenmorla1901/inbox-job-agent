@@ -331,6 +331,45 @@ def test_alerts_with_no_postings_are_callable_out(client):
     assert b"Candidate New Job Alerts" in filtered.content
 
 
+def test_parsed_not_stored_shows_on_analysis(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        session.add(
+            Message(
+                id="gap1",
+                subject="Deloitte is interested in you",
+                category="other",
+                jobs_found=2,
+                extract_json='{"candidates":[{"title":"ML Engineer","company":"Deloitte","url":"","url_key":"card:deloitte:ml"}]}',
+            )
+        )
+        session.commit()
+    page = test_client.get("/?days=30&m=gap1")
+    assert b"Parsed, not stored" in page.content
+    assert b"ML Engineer" in page.content
+    assert b"never stored as job rows" in page.content
+    filtered = test_client.get("/?days=30&has=unstored")
+    assert b"Deloitte is interested in you" in filtered.content
+
+
+def test_report_miss_lands_on_issues(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        session.add(Message(id="miss1", subject="Apple jobs", category="other", jobs_found=4))
+        session.commit()
+    response = test_client.post(
+        "/mail/miss1/miss",
+        data={"redirect": "/?m=miss1&days=30"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with Session(engine) as session:
+        issue = session.exec(select(Issue)).first()
+        assert issue is not None
+        assert "Extraction miss" in issue.title
+        assert issue.message_id == "miss1"
+
+
 def test_applications_label_blank_roles_as_unknown(client):
     test_client, engine = client
     with Session(engine) as session:

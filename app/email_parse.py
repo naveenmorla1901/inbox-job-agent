@@ -68,7 +68,18 @@ class ParsedEmail:
         return f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{quote(mid, safe='')}"
 
     def body(self, limit: int = 20000) -> str:
-        return (self.text or html_to_text(self.html))[:limit]
+        """The richer of the two parts, not simply text-first.
+
+        Marketing mail often ships a text/plain part carrying only a stub
+        preheader beside the real HTML body. Preferring `text` unconditionally
+        fed the classifier and the digest prompt a near-empty email, so a
+        six-role blast looked like two characters of content.
+        """
+        plain = (self.text or "").strip()
+        if len(plain) >= 400:
+            return plain[:limit]
+        rich = html_to_text(self.html)
+        return (rich if len(rich) > len(plain) else plain)[:limit]
 
 
 def html_to_text(html: str) -> str:

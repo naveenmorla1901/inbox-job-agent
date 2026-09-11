@@ -217,7 +217,7 @@ def expected_posting_count(email: ParsedEmail, anchors: list[Anchor]) -> int:
         from_anchors = {
             _title_fingerprint(a.text) for a in anchors if _title_like(a.text)
         } - {""}
-    body = email.text or html_to_text(email.html)
+    body = email.body()
     from_text = {
         _title_fingerprint(line)
         for line in (body or "").splitlines()
@@ -336,7 +336,7 @@ def llm_extract_digest(
         "\n".join(f"[{a.idx}] text={a.text!r} url={a.url[:180]}" for a in anchors)
         or "(no links in this email)"
     )
-    body = (email.text or html_to_text(email.html))[: settings.llm_extract_body_chars]
+    body = email.body(settings.llm_extract_body_chars)
     data = llm.json(
         LLM_DIGEST_PROMPT.format(
             links=links_block, text=body, expected=max(expected, 1)

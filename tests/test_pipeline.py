@@ -2,8 +2,10 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app import db, pipeline
+from app.classify import Classification
 from app.config import get_settings
 from app.email_parse import ParsedEmail, extract_links
+from app.extract_jobs import JobCandidate
 from app.llm import LLM
 from app.models import Application, Issue, Job, Message, Outreach, PollRun
 from app.reporting import build_breakdown
@@ -181,6 +183,108 @@ def test_application_receipt_is_tracked_but_not_a_follow_up(session):
     assert outcome.application is not None
     assert outcome.outreach is None
     assert session.exec(select(Outreach)).all() == []
+
+
+def test_reextract_reads_the_original_email_not_our_reconstruction(session, monkeypatch):
+    row = Message(
+        id="miss-1",
+        subject="Roles matching your alert",
+        sender_email="alerts@jobs.apple.com",
+        body_text="Machine Learning Engineer",
+        extract_json='{"candidates": [], "link_count": 0}',
+    )
+    session.add(row)
+    session.flush()
+
+    class FakeGmail:
+        def __init__(self, settings):
+            pass
+
+        def get_message(self, message_id):
+            assert message_id == "miss-1"
+            return _gmail_payload_with_two_roles()
+
+    monkeypatch.setattr(pipeline, "GmailClient", FakeGmail)
+    email = pipeline.email_for_reextract(row)
+    # The stored copy holds no candidates at all, so anything here came from Gmail.
+    assert "Data Scientist" in email.body()
+    assert len(email.links) == 2
+
+
+def test_reextract_falls_back_when_gmail_is_unavailable(session, monkeypatch):
+    row = Message(
+        id="miss-2",
+        subject="Roles matching your alert",
+        body_text="Machine Learning Engineer",
+        extract_json='{"candidates": [{"url": "https://jobs.apple.com/x", "title": "MLE"}]}',
+    )
+    session.add(row)
+    session.flush()
+
+    def boom(settings):
+        raise RuntimeError("Gmail is not authorised")
+
+    monkeypatch.setattr(pipeline, "GmailClient", boom)
+    email = pipeline.email_for_reextract(row)
+    assert email.id == "miss-2"
+    assert [link.url for link in email.links] == ["https://jobs.apple.com/x"]
+
+
+def _gmail_payload_with_two_roles() -> dict:
+    import base64
+
+    html = (
+        "<html><body><p>Two roles match your alert.</p>"
+        '<a href="https://jobs.apple.com/en-us/details/111">Machine Learning Engineer</a>'
+        '<a href="https://jobs.apple.com/en-us/details/222">Data Scientist</a>'
+        "</body></html>"
+    )
+    return {
+        "id": "miss-1",
+        "threadId": "t1",
+        "snippet": "Two roles match your alert.",
+        "internalDate": "1756962000000",
+        "payload": {
+            "mimeType": "text/html",
+            "headers": [
+                {"name": "From", "value": "Apple Jobs <alerts@jobs.apple.com>"},
+                {"name": "Subject", "value": "Roles matching your alert"},
+            ],
+            "body": {"data": base64.urlsafe_b64encode(html.encode()).decode()},
+        },
+    }
+
+
+def _candidate(title: str, url: str = "", source: str = "") -> JobCandidate:
+    return JobCandidate(url=url, url_key=url or f"card:{title}", title=title, source=source)
+
+
+def test_untagged_blast_stores_roles_with_no_link_or_known_source():
+    # "Naveen, Deloitte is interested in you" classifies as other, and the roles the
+    # LLM read out of the body carry neither a source nor a link of their own.
+    result = Classification(category="other")
+    candidates = [_candidate("Machine Learning Engineer"), _candidate("Data Scientist")]
+    assert pipeline._should_store_jobs(result, candidates) is True
+
+
+def test_receipt_role_alone_does_not_become_a_job_row():
+    result = Classification(category="application_update")
+    assert pipeline._should_store_jobs(result, [_candidate("Data Scientist, FP&A")]) is False
+
+
+def test_receipt_similar_jobs_link_still_becomes_a_job_row():
+    result = Classification(category="application_update")
+    linked = _candidate(
+        "Machine Learning Engineer",
+        url="https://www.linkedin.com/jobs/view/3901234567",
+        source="linkedin",
+    )
+    assert pipeline._should_store_jobs(result, [linked]) is True
+
+
+def test_rejection_never_stores_job_rows():
+    result = Classification(category="rejection")
+    assert pipeline._should_store_jobs(result, [_candidate("Data Scientist")]) is False
 
 
 def test_refresh_promotes_a_video_round_onto_follow_ups(session):

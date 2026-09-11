@@ -50,15 +50,19 @@ class Settings(BaseSettings):
     llm_provider: str = "none"  # legacy single-provider setting, still honoured
     gemini_api_key: str = ""
     gemini_api_key_2: str = ""  # second Google AI Studio account; rotated with gemini_api_key
+    # Alias that always tracks Google's newest Flash (gemini-3.8-flash as of Sep 2026).
     gemini_model: str = "gemini-flash-latest"
     groq_api_key: str = ""
-    groq_model: str = "openai/gpt-oss-20b"
+    groq_model: str = "openai/gpt-oss-120b"
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-flash"
     nvidia_api_key: str = ""
     nvidia_model: str = "nvidia/nemotron-3-ultra-550b-a55b"
     openrouter_api_key: str = ""
-    openrouter_model: str = "openai/gpt-oss-20b:free"
+    # OpenRouter retires free slugs without warning; gpt-oss-20b:free is gone as of
+    # Sept 2026, which made every OpenRouter call a 404. Nemotron Ultra is free there
+    # and carries a 1M context, which the digest prompt can use.
+    openrouter_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
 
