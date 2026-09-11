@@ -36,7 +36,7 @@ def probe_apis() -> list[dict]:
         seen.add(provider.name)
         label = f"LLM · {provider.name}"
         try:
-            answer = llm._try_provider(
+            answer, why = llm._try_provider(
                 provider,
                 model,
                 'Reply with the single word pong and nothing else.',
@@ -44,18 +44,17 @@ def probe_apis() -> list[dict]:
                 20,
             )
         except Exception as exc:
-            answer = ""
-            detail = str(exc)[:240]
-            record_issue("llm", f"LLM {provider.name} probe failed", detail, severity="error")
-            rows.append({"name": label, "ok": False, "detail": detail})
+            answer, why = "", str(exc)[:240]
+            record_issue("llm", f"LLM {provider.name} probe failed", why, severity="error")
+            rows.append({"name": label, "ok": False, "detail": why})
             continue
         if answer and "pong" in answer.lower():
             rows.append({"name": label, "ok": True, "detail": f"{model} answered"})
         elif answer:
             rows.append({"name": label, "ok": True, "detail": f"{model} answered ({answer[:40]!r})"})
         else:
-            record_issue("llm", f"LLM {provider.name} probe failed", "empty reply", severity="error")
-            rows.append({"name": label, "ok": False, "detail": f"{model} returned nothing"})
+            record_issue("llm", f"LLM {provider.name} probe failed", why or "empty reply", severity="error")
+            rows.append({"name": label, "ok": False, "detail": f"{model} {why or 'returned nothing'}"})
     if not seen:
         rows.append({"name": "LLM", "ok": False, "detail": "LLM is on but no provider has a key"})
     return rows

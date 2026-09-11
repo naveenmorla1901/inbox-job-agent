@@ -65,7 +65,7 @@
   </aside>
 
   <div class="stack">
-    <p class="lede" style="margin:0">Gmail token and every LLM key on this service. Cooling means that provider hit quota and is skipped for a while. <b>Probe APIs</b> makes one live call to Gmail and each LLM — use it when something looks down.</p>
+    <p class="lede" style="margin:0">Gmail token and every LLM key on this service. Cooling means that provider hit quota and is skipped for a while. A rate-limit line that says <b>used</b> a later model means the task still finished. <b>No LLM answered</b> means every model in the chain failed. <b>Probe APIs</b> makes one live call to Gmail and each LLM — use it when something looks down.</p>
     {% if not issues %}
     <div class="empty">
       <div class="big">No issues in this window</div>
@@ -87,7 +87,7 @@
         <tr>
           <td class="tight mono">{{ item.occurred_at | et("%b %d, %I:%M:%S %p ET") }}</td>
           <td class="tight"><span class="tag">{{ item.source }}</span></td>
-          <td class="tight"><span class="tag {% if item.severity == 'error' %}bad{% elif item.severity == 'warn' %}warn{% endif %}">{{ item.severity }}</span></td>
+            <td class="tight"><span class="tag {% if item.severity == 'error' %}bad{% elif item.severity == 'warn' %}warn{% elif item.severity == 'info' %}accent{% endif %}">{{ item.severity }}</span></td>
           <td>
             <b>{{ item.title }}</b>
             {% if item.message_id %}

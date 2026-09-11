@@ -13,10 +13,14 @@ from sqlmodel import Session, col, func, select
 from .applications import dupe_key, record_email
 from .classify import (
     APPLICATION_UPDATE,
+    FOLLOW_UP_KINDS,
     JOB_ALERT,
     OTHER,
     Classification,
     classify_email,
+    has_real_ask,
+    is_acknowledgement,
+    is_login_or_security,
 )
 from .config import get_profile, get_settings
 from .db import exists, get_state, init_db, session_scope, set_state
@@ -789,6 +793,49 @@ def _should_store_jobs(result: Classification, candidates: list[JobCandidate]) -
     return False
 
 
+def demote_noise_followups(session: Session) -> int:
+    """Hide login codes and bare acknowledgements that landed on Follow-ups."""
+    items = session.exec(
+        select(Outreach).where(
+            Outreach.handled == False,  # noqa: E712
+            col(Outreach.kind).in_(FOLLOW_UP_KINDS),
+        )
+    ).all()
+    changed = 0
+    for item in items:
+        message = session.get(Message, item.message_id) if item.message_id else None
+        blob = "\n".join(
+            part
+            for part in (
+                item.subject,
+                item.summary,
+                message.subject if message else "",
+                message.body_text if message else "",
+                message.snippet if message else "",
+            )
+            if part
+        )
+        if is_login_or_security(blob):
+            item.kind = OTHER
+            item.handled = True
+            if message:
+                message.category = OTHER
+                message.email_type = message.email_type or "security"
+                session.add(message)
+            session.add(item)
+            changed += 1
+            continue
+        if is_acknowledgement(blob) and not has_real_ask(blob):
+            item.kind = APPLICATION_UPDATE
+            item.handled = True
+            if message:
+                message.category = APPLICATION_UPDATE
+                session.add(message)
+            session.add(item)
+            changed += 1
+    return changed
+
+
 def _note_scrape_problems(scraped: dict, message_id: str) -> None:
     bad = notable_scrape_failures(scraped)
     if not bad:
@@ -1079,6 +1126,7 @@ def run_once(
     latest_epoch = 0
 
     with session_scope() as session:
+        demote_noise_followups(session)
         search = build_query(
             session,
             since_days=since_days,

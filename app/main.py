@@ -31,6 +31,7 @@ from .models import Application, ApplicationEvent, ExtractMiss, Job, Message, Ou
 from .pipeline import (
     clear_inbox,
     count_purge_window,
+    demote_noise_followups,
     email_for_reextract,
     ensure_poll_origin,
     load_last_run,
@@ -433,10 +434,13 @@ def matches_page(
     min_score: float | None = None,
     show: str = "matched",
     duplicates: str = "hide",
+    sort: str = "time",
 ):
     settings = get_settings()
     threshold = 0.0 if show == "all" else (settings.min_job_score if min_score is None else min_score)
     since = datetime.now(timezone.utc) - timedelta(days=days)
+    if sort not in ("time", "score", "score_asc"):
+        sort = "time"
 
     stmt = select(Job).where(Job.score >= threshold, Job.received_at >= since)
     if duplicates == "hide":
@@ -452,23 +456,34 @@ def matches_page(
             | func.lower(Job.company).like(like)
             | func.lower(Job.description).like(like)
         )
-    jobs = session.exec(stmt.order_by(col(Job.received_at).desc(), col(Job.score).desc()).limit(300)).all()
+    if sort == "score":
+        order = (col(Job.score).desc(), col(Job.received_at).desc())
+    elif sort == "score_asc":
+        order = (col(Job.score).asc(), col(Job.received_at).desc())
+    else:
+        order = (col(Job.received_at).desc(), col(Job.score).desc())
+    jobs = session.exec(stmt.order_by(*order).limit(300)).all()
     mail_ids = {job.message_id for job in jobs}
     messages_by_id = {}
     if mail_ids:
         for message in session.exec(select(Message).where(col(Message.id).in_(list(mail_ids)))).all():
             messages_by_id[message.id] = message
+    if sort == "time":
+        day_groups = group_by_et_day(jobs)
+    else:
+        day_groups = [("", jobs)]
 
     return templates.TemplateResponse(
         request,
         "jobs.html",
         {
-            "day_groups": group_by_et_day(jobs),
+            "day_groups": day_groups,
             "messages_by_id": messages_by_id,
             "status": status,
             "q": q,
             "days": days,
             "show": show,
+            "sort": sort,
             "duplicates": duplicates,
             "duplicate_count": session.exec(
                 select(func.count())
@@ -1222,6 +1237,8 @@ def outreach_page(
     days: int = 60,
     who: str = "all",
 ):
+    demote_noise_followups(session)
+    session.commit()
     since = datetime.now(timezone.utc) - timedelta(days=days)
     stmt = select(Outreach).where(Outreach.received_at >= since, col(Outreach.kind).in_(FOLLOW_UP_KINDS))
     if show == "open":

@@ -64,7 +64,7 @@
 {% else %}
 <div class="workspace">
   <div class="pane">
-    <div class="pane-scroll">
+    <div class="pane-scroll" id="mail-list">
       {% for day, rows in day_groups %}
       <div class="day-head">{{ day }}</div>
       {% for message in rows %}
@@ -302,6 +302,23 @@
   if (!rows.length) return;
   const active = rows.findIndex((row) => row.classList.contains("active"));
   const gmail = {{ ("https://mail.google.com/mail/u/0/#inbox/" ~ selected.id if selected else "") | tojson }};
+  const list = document.getElementById("mail-list");
+  const scrollKey = "mail-list-scroll";
+  if (list) {
+    const saved = sessionStorage.getItem(scrollKey);
+    if (saved) list.scrollTop = parseInt(saved, 10) || 0;
+    rows.forEach((row) => {
+      row.addEventListener("click", () => {
+        sessionStorage.setItem(scrollKey, String(list.scrollTop));
+      });
+    });
+    list.addEventListener("scroll", () => {
+      sessionStorage.setItem(scrollKey, String(list.scrollTop));
+    });
+  }
+  if (active >= 0) {
+    rows[active].scrollIntoView({ block: "nearest" });
+  }
 
   document.addEventListener("keydown", (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;

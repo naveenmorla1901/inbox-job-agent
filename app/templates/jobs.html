@@ -29,6 +29,14 @@
     </select>
   </div>
   <div class="field">
+    <label>Sort</label>
+    <select name="sort" onchange="this.form.submit()">
+      <option value="time" {% if sort == 'time' %}selected{% endif %}>Newest first</option>
+      <option value="score" {% if sort == 'score' %}selected{% endif %}>Score high → low</option>
+      <option value="score_asc" {% if sort == 'score_asc' %}selected{% endif %}>Score low → high</option>
+    </select>
+  </div>
+  <div class="field">
     <label>Window</label>
     <select name="days">
       {% for option in [1, 2, 3, 7, 14, 30, 90] %}
@@ -68,7 +76,9 @@
   </thead>
   <tbody>
   {% for day, jobs in day_groups %}
+  {% if day %}
   <tr><td colspan="8" class="tight" style="background:var(--surface-2); color:var(--faint); font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase">{{ day }}</td></tr>
+  {% endif %}
   {% for job in jobs %}
   {% set mail = messages_by_id.get(job.message_id) %}
   <tr>

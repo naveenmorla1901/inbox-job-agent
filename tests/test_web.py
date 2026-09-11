@@ -187,6 +187,10 @@ def test_matches_page_groups_by_day_and_shows_source_mail(client):
     response = test_client.get("/matches?days=30&show=all&status=all")
     assert response.status_code == 200
     assert b"from" in response.content or b"Details" in response.content
+    assert b"Newest first" in response.content
+    scored = test_client.get("/matches?days=30&show=all&status=all&sort=score")
+    assert scored.status_code == 200
+    assert b"Score high" in scored.content
     assert test_client.get("/messages").status_code in (200, 302)
 
 
@@ -461,6 +465,24 @@ def test_applications_label_blank_roles_as_unknown(client):
         session.commit()
     page = test_client.get("/applications")
     assert b"Unknown role" in page.content
+
+
+def test_outreach_hides_first_steps_acknowledgement(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        session.add(Message(id="ack1", subject="Thank you for taking the first steps towards a career at Acme"))
+        session.add(
+            Outreach(
+                message_id="ack1",
+                kind="next_step",
+                subject="Thank you for taking the first steps towards a career at Acme",
+                company="Acme",
+            )
+        )
+        session.commit()
+    page = test_client.get("/outreach")
+    assert page.status_code == 200
+    assert b"first steps" not in page.content
 
 
 def test_not_followup_drops_item_from_the_list(client):

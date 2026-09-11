@@ -465,3 +465,30 @@ def test_empty_job_page_still_matches_a_target_title(session, monkeypatch):
     ds = next(job for job in outcome.jobs if "Data Scientist" in (job.title or ""))
     assert ds.scrape_status == "empty"
     assert ds.matched
+
+
+def test_demote_hides_ack_and_login_followups(session):
+    session.add(Message(id="ack1", subject="Thank you for taking the first steps towards a career at Acme"))
+    session.add(Message(id="code1", subject="Confirm your identity for job application Engineer", body_text="Enter provided code 123456"))
+    session.add(
+        Outreach(
+            message_id="ack1",
+            kind="next_step",
+            subject="Thank you for taking the first steps towards a career at Acme",
+        )
+    )
+    session.add(
+        Outreach(
+            message_id="code1",
+            kind="next_step",
+            subject="Confirm your identity for job application Engineer",
+        )
+    )
+    session.commit()
+    changed = pipeline.demote_noise_followups(session)
+    session.commit()
+    assert changed == 2
+    ack = session.exec(select(Outreach).where(Outreach.message_id == "ack1")).first()
+    code = session.exec(select(Outreach).where(Outreach.message_id == "code1")).first()
+    assert ack.handled and ack.kind == "application_update"
+    assert code.handled and code.kind == "other"

@@ -144,6 +144,36 @@ def test_login_code_is_not_an_application_update():
     assert not result.is_tracked
 
 
+def test_identity_code_is_not_a_follow_up():
+    result = classify_email(
+        email(
+            "no-reply@myworkday.com",
+            "Confirm your identity for job application Engineer",
+            "Enter provided code 482193 to continue your application.",
+        ),
+        PROFILE,
+        llm=None,
+    )
+    assert result.category == OTHER
+    assert not result.is_follow_up
+    assert result.email_type == "security"
+
+
+def test_first_steps_ack_is_not_a_follow_up():
+    result = classify_email(
+        email(
+            "careers@acme.com",
+            "Thank you for taking the first steps towards a career at Acme",
+            "Thank you for taking the first steps towards a career at Acme. We will review your application.",
+        ),
+        PROFILE,
+        llm=None,
+    )
+    assert result.category == "application_update"
+    assert not result.is_follow_up
+    assert result.is_tracked
+
+
 def test_marketing_is_ignored():
     result = classify_rules(
         email("news@medium.com", "Your weekly newsletter", "Top stories this week. Unsubscribe from all."),

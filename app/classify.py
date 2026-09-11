@@ -94,6 +94,8 @@ REJECTION_RE = re.compile(
 APPLIED_RE = re.compile(
     r"(thank(s| you)?( very much)? for (applying|your (interest|application))|"
     r"thank(s| you)? for taking the time to apply|"
+    r"thank(s| you)? for taking the first steps|"
+    r"first steps toward[s]? a career|"
     r"application (was )?(received|submitted|sent|complete)|successfully (submitted|applied|sent)|"
     r"we (have )?received your application|your application (to|for|is|has|was sent)|"
     r"application status)",
@@ -260,12 +262,46 @@ def _fill_from_email(result: Classification, email: ParsedEmail) -> Classificati
     return result
 
 
+def _blob(email: ParsedEmail, limit: int = 6000) -> str:
+    return f"{email.subject or ''}\n{email.body(limit)}"
+
+
+def is_login_or_security(blob: str) -> bool:
+    return bool(LOGIN_CODE_RE.search(blob or "") or SECURITY_RE.search(blob or ""))
+
+
+def is_acknowledgement(blob: str) -> bool:
+    return bool(SUBMITTED_RE.search(blob or "") or APPLIED_RE.search(blob or ""))
+
+
+def has_real_ask(blob: str) -> bool:
+    """A receipt can also ask you to do something; those stay follow-ups."""
+    return bool(
+        INTERVIEW_RE.search(blob or "")
+        or ASSESSMENT_RE.search(blob or "")
+        or VIDEO_STEP_RE.search(blob or "")
+        or NEXT_STEP_RE.search(blob or "")
+    )
+
+
 def classify_email(
     email: ParsedEmail, profile: Profile, llm: LLM | None = None, job_count: int = 0
 ) -> Classification:
     result = classify_rules(email, profile, job_count)
+    blob = _blob(email)
 
-    if result.reason == "login/security code":
+    # Login codes and plain receipts must not become follow-ups, even if an LLM
+    # later guesses recruiter / next_step from words like "application" or "code".
+    if result.reason == "login/security code" or is_login_or_security(blob):
+        return _fill_from_email(
+            Classification(OTHER, 0.95, "login/security code", email_type="security"),
+            email,
+        )
+    if result.reason == "application acknowledgement" or (
+        is_acknowledgement(blob) and not has_real_ask(blob)
+    ):
+        if result.category != APPLICATION_UPDATE:
+            result = Classification(APPLICATION_UPDATE, 0.85, "application acknowledgement")
         return _fill_from_email(result, email)
 
     ambiguous = result.confidence < 0.75 or result.category == RECRUITER
@@ -302,4 +338,8 @@ def classify_email(
                 experience_required=str(data.get("experience_required", ""))[:80],
                 scheduling_url=str(data.get("scheduling_url", ""))[:400],
             )
+    if is_login_or_security(blob):
+        result = Classification(OTHER, 0.95, "login/security code", email_type="security")
+    elif result.is_follow_up and is_acknowledgement(blob) and not has_real_ask(blob):
+        result = Classification(APPLICATION_UPDATE, 0.85, "application acknowledgement")
     return _fill_from_email(result, email)

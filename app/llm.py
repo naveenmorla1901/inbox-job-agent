@@ -239,34 +239,46 @@ class LLM:
 
     def complete(self, prompt: str, system: str = "", task: str = CLASSIFY, timeout: int = 45) -> str:
         chain = self.chain(task)
-        skipped: list[str] = []
+        attempts: list[str] = []
         for provider, model in chain:
+            label = f"{provider.name}:{model}"
             if _cooling(provider.name):
-                skipped.append(provider.name)
+                attempts.append(f"{label} skipped (cooling)")
                 continue
-            answer = self._try_provider(provider, model, prompt, system, timeout)
+            answer, why = self._try_provider(provider, model, prompt, system, timeout)
             if answer:
-                self.last_used = f"{provider.name}:{model}"
+                self.last_used = label
                 self._rest_gemini(provider)
-                if skipped:
-                    log.info("%s answered %s after skipping %s", provider.name, task, ", ".join(skipped))
+                if attempts:
+                    log.info("%s answered %s after %s", label, task, "; ".join(attempts))
+                    self._record_llm_outcome(
+                        task,
+                        f"{task} used {label}",
+                        "Failed or skipped first, then a later model answered.\n"
+                        + "\n".join(attempts)
+                        + f"\n{label} answered",
+                        severity="info",
+                    )
                 return answer
-        if skipped:
-            log.warning("every provider for %s is cooling down: %s", task, ", ".join(skipped))
+            attempts.append(f"{label} failed ({why or 'empty response'})")
+        if attempts:
+            log.warning("no LLM answered %s: %s", task, "; ".join(attempts))
         if chain:
-            tried = [f"{p.name}:{model}" for p, model in chain]
-            try:
-                from .issues import record_issue
-
-                record_issue(
-                    "llm",
-                    f"No LLM answered {task}",
-                    "tried " + ", ".join(tried) + (f"; cooling: {', '.join(skipped)}" if skipped else ""),
-                    severity="error",
-                )
-            except Exception:
-                pass
+            self._record_llm_outcome(
+                task,
+                f"No LLM answered {task}",
+                "\n".join(attempts) or "chain was empty after keys",
+                severity="error",
+            )
         return ""
+
+    def _record_llm_outcome(self, task: str, title: str, detail: str, severity: str) -> None:
+        try:
+            from .issues import record_issue
+
+            record_issue("llm", title, detail, severity=severity)
+        except Exception:
+            pass
 
     def json(self, prompt: str, system: str = "", task: str = CLASSIFY, timeout: int = 45) -> dict[str, Any]:
         raw = self.complete(prompt, system, task=task, timeout=timeout)
@@ -283,65 +295,42 @@ class LLM:
 
     def _try_provider(
         self, provider: Provider, model: str, prompt: str, system: str, timeout: int
-    ) -> str:
+    ) -> tuple[str, str]:
+        last_why = "empty response"
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
-                return self._call(provider, model, prompt, system, timeout)
+                answer = self._call(provider, model, prompt, system, timeout)
+                return (answer, "") if answer else ("", "empty response")
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
                 if status in QUOTA_STATUS:
                     self._park(provider, self.settings.llm_cooldown_seconds, "rate limited")
-                    return ""
+                    return "", "rate limited"
                 if status in AUTH_STATUS:
                     self._park(provider, 3600, f"rejected the key ({status})")
-                    return ""
+                    return "", f"rejected the key ({status})"
                 if status in (404, 410):
                     self._park(provider, 3600, f"endpoint or model gone ({status})")
-                    return ""
+                    return "", f"endpoint or model gone ({status})"
                 if status in RETRY_STATUS and attempt < MAX_ATTEMPTS:
                     time.sleep(BACKOFF_SECONDS * attempt)
+                    last_why = f"unavailable ({status})"
                     continue
                 if status in RETRY_STATUS:
                     self._park(provider, 180, f"unavailable ({status})")
-                    return ""
-                log.warning("%s failed (%s): %s", provider.name, model, self._redact(str(exc)))
-                try:
-                    from .issues import record_issue
-
-                    record_issue(
-                        "llm",
-                        f"LLM {provider.name} failed ({status})",
-                        self._redact(str(exc)),
-                        severity="error",
-                    )
-                except Exception:
-                    pass
-                return ""
+                    return "", f"unavailable ({status})"
+                last_why = self._redact(str(exc))[:200]
+                log.warning("%s failed (%s): %s", provider.name, model, last_why)
+                return "", last_why
             except Exception as exc:
-                log.warning("%s failed (%s): %s", provider.name, model, self._redact(str(exc)))
-                try:
-                    from .issues import record_issue
-
-                    record_issue(
-                        "llm",
-                        f"LLM {provider.name} failed",
-                        self._redact(str(exc)),
-                        severity="error",
-                    )
-                except Exception:
-                    pass
-                return ""
-        return ""
+                last_why = self._redact(str(exc))[:200] or "error"
+                log.warning("%s failed (%s): %s", provider.name, model, last_why)
+                return "", last_why
+        return "", last_why
 
     def _park(self, provider: Provider, seconds: int, why: str) -> None:
         _cooldowns[provider.name] = time.time() + seconds
         log.warning("%s %s - skipping it for %ds", provider.name, why, seconds)
-        try:
-            from .issues import record_issue
-
-            record_issue("llm", f"LLM {provider.name} {why}", f"skipping {seconds}s", severity="warn")
-        except Exception:
-            pass
 
     def _rest_gemini(self, provider: Provider) -> None:
         """After a successful Gemini call, sit that key out so the other account is used next."""

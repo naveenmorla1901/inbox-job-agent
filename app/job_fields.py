@@ -152,7 +152,9 @@ SECURITY_RE = re.compile(
 LOGIN_CODE_RE = re.compile(
     r"(verification code|security code|one[- ]time (?:pass)?code|one[- ]time password|\botp\b|"
     r"(?:sign[- ]?in|login|authentication) code|passcode|"
-    r"your code is\s*\d{4,8}|enter this code|multi[- ]factor authentication|"
+    r"your code is\s*\d{4,8}|enter (this |the |the provided |provided )?code|"
+    r"confirm your identity|verify your identity|"
+    r"multi[- ]factor authentication|"
     r"2[- ]step verification|magic link to (?:sign|log) in)",
     re.I,
 )
