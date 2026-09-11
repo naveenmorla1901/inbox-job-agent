@@ -14,7 +14,7 @@
     </form>
     {% for status in ["applied", "in_review", "next_step", "assessment", "interview", "offer", "rejected"] %}
     <div class="rail-kpi {% if status in ('interview', 'offer', 'next_step') %}good{% endif %}">
-      <span>{{ status.replace("_", " ")|title }}</span>
+      <span>{{ status|marked("app") }}</span>
       <b>{{ counts.get(status, 0) }}</b>
     </div>
     {% endfor %}
@@ -52,7 +52,7 @@
           {% if application.next_action %}<div class="meta" style="color:var(--warn)">{{ application.next_action }}</div>{% endif %}
         </td>
         <td class="tight">{{ application.company }}</td>
-        <td class="tight"><span class="tag {% if application.status in ('interview', 'offer', 'next_step') %}good{% elif application.status == 'rejected' %}bad{% else %}accent{% endif %}">{{ application.status.replace("_", " ")|title }}</span></td>
+        <td class="tight"><span class="tag {% if application.status in ('interview', 'offer', 'next_step') %}good{% elif application.status == 'rejected' %}bad{% else %}accent{% endif %}">{{ application.status|marked("app") }}</span></td>
         <td class="tight mono">{{ application.applied_at | et("%b %d") }}</td>
         <td class="tight mono">{{ application.last_event_at | et("%b %d") }}</td>
         <td class="tight">{{ application.source or "—" }}</td>

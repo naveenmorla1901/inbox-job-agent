@@ -54,6 +54,8 @@
       border-radius: 8px; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
     nav.tabs a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
     nav.tabs a.active { color: var(--accent); background: var(--accent-soft); }
+    .ico { font-style: normal; font-weight: 400; margin-right: 0.28em; }
+    nav.tabs a .ico { margin-right: 5px; font-size: 13px; line-height: 1; }
     .count-badge { background: var(--bad); color: #fff; border-radius: 999px;
       padding: 0 6px; font-size: 11px; font-weight: 700; min-width: 17px; text-align: center; }
     .sync { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px;
@@ -280,24 +282,24 @@
   <div class="bar">
     <a class="brand" href="/"><span class="mark">J</span>Inbox&nbsp;Job&nbsp;Agent</a>
     <nav class="tabs">
-      <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Mail</a>
-      <a href="/matches" class="{% if request.url.path == '/matches' %}active{% endif %}">Matches</a>
+      <a href="/" class="{% if request.url.path == '/' %}active{% endif %}"><span class="ico" aria-hidden="true">{{ "mail"|ico("nav") }}</span>Mail</a>
+      <a href="/matches" class="{% if request.url.path == '/matches' %}active{% endif %}"><span class="ico" aria-hidden="true">{{ "matches"|ico("nav") }}</span>Matches</a>
       <a href="/outreach" class="{% if request.url.path.startswith('/outreach') %}active{% endif %}">
-        Follow-ups{% if nav_pending %}<span class="count-badge">{{ nav_pending }}</span>{% endif %}
+        <span class="ico" aria-hidden="true">{{ "followups"|ico("nav") }}</span>Follow-ups{% if nav_pending %}<span class="count-badge">{{ nav_pending }}</span>{% endif %}
       </a>
-      <a href="/applications" class="{% if request.url.path.startswith('/application') %}active{% endif %}">Applications</a>
-      <a href="/overview" class="{% if request.url.path == '/overview' %}active{% endif %}">Overview</a>
-      <a href="/charts" class="{% if request.url.path.startswith('/charts') %}active{% endif %}">Charts</a>
-      <a href="/cache" class="{% if request.url.path.startswith('/cache') %}active{% endif %}">Clear cache</a>
-      <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}">Status</a>
+      <a href="/applications" class="{% if request.url.path.startswith('/application') %}active{% endif %}"><span class="ico" aria-hidden="true">{{ "applications"|ico("nav") }}</span>Applications</a>
+      <a href="/overview" class="{% if request.url.path == '/overview' %}active{% endif %}"><span class="ico" aria-hidden="true">{{ "overview"|ico("nav") }}</span>Overview</a>
+      <a href="/charts" class="{% if request.url.path.startswith('/charts') %}active{% endif %}"><span class="ico" aria-hidden="true">{{ "charts"|ico("nav") }}</span>Charts</a>
+      <a href="/cache" class="{% if request.url.path.startswith('/cache') %}active{% endif %}"><span class="ico" aria-hidden="true">{{ "cache"|ico("nav") }}</span>Clear cache</a>
+      <a href="/activity" class="{% if request.url.path.startswith('/activity') %}active{% endif %}"><span class="ico" aria-hidden="true">{{ "status"|ico("nav") }}</span>Status</a>
       <a href="/issues" class="{% if request.url.path.startswith('/issues') %}active{% endif %}">
-        Issues{% if nav_errors %}<span class="count-badge">{{ nav_errors }}</span>{% endif %}
+        <span class="ico" aria-hidden="true">{{ "issues"|ico("nav") }}</span>Issues{% if nav_errors %}<span class="count-badge">{{ nav_errors }}</span>{% endif %}
       </a>
       <a href="/flags" class="{% if request.url.path.startswith('/flags') %}active{% endif %}">
-        Flags{% if nav_flags %}<span class="count-badge">{{ nav_flags }}</span>{% endif %}
+        <span class="ico" aria-hidden="true">{{ "flags"|ico("nav") }}</span>Flags{% if nav_flags %}<span class="count-badge">{{ nav_flags }}</span>{% endif %}
       </a>
       <a href="/misses" class="{% if request.url.path.startswith('/misses') %}active{% endif %}">
-        Misses{% if nav_misses %}<span class="count-badge">{{ nav_misses }}</span>{% endif %}
+        <span class="ico" aria-hidden="true">{{ "misses"|ico("nav") }}</span>Misses{% if nav_misses %}<span class="count-badge">{{ nav_misses }}</span>{% endif %}
       </a>
     </nav>
     {% if request.url.path != '/login' %}

@@ -26,6 +26,8 @@ from .config import ROOT, get_profile, get_settings
 from .db import get_engine, init_db
 from .gmail_client import gmail_token_status, host_setup, parse_gmail_push
 from .issues import issue_counts, latest_by_source, recent_issues
+from .marks import marked as mark_label
+from .marks import icon as mark_icon
 from .extract_miss import list_misses, miss_count, upsert_extract_miss
 from .models import Application, ApplicationEvent, ExtractMiss, Job, Message, Outreach
 from .pipeline import (
@@ -177,6 +179,8 @@ templates = Jinja2Templates(
     context_processors=[_template_host_setup, _template_nav],
 )
 templates.env.filters["et"] = fmt_et
+templates.env.filters["ico"] = mark_icon
+templates.env.filters["marked"] = mark_label
 templates.env.filters["ago"] = lambda dt: _humanize_ago(dt)
 templates.env.filters["epoch_et"] = lambda ts, fmt="%I:%M %p ET": (
     fmt_et(datetime.fromtimestamp(int(ts), tz=timezone.utc), fmt)

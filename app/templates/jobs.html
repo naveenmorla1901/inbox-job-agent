@@ -90,7 +90,7 @@
       {% if not job.matched %}<span class="tag">below</span>{% endif %}
       {% if job.duplicate_of %}<span class="tag">repeat</span>{% endif %}
       {% if job.scrape_status and job.scrape_status != 'ok' %}
-      <span class="tag {% if job.scrape_status in ('blocked', 'empty') %}warn{% endif %}">{{ job.scrape_status }}</span>
+      <span class="tag {% if job.scrape_status in ('blocked', 'empty') %}warn{% endif %}">{{ job.scrape_status|ico("scrape") }} {{ job.scrape_status }}</span>
       {% endif %}
       {% if mail %}<div class="meta">{{ mail.subject[:70] or "(no subject)" }}</div>{% endif %}
     </td>
@@ -98,7 +98,7 @@
     <td>{{ job.location or "—" }}</td>
     <td class="tight">{{ job.source }}</td>
     <td class="tight mono">{{ job.received_at | et("%b %d %I:%M %p") }}</td>
-    <td class="tight"><span class="tag {% if job.status != 'new' %}accent{% endif %}">{{ job.status|title }}</span></td>
+    <td class="tight"><span class="tag {% if job.status != 'new' %}accent{% endif %}">{{ job.status|marked("job") }}</span></td>
     <td>
       <div class="cell-actions">
         <a class="tag" href="/job/{{ job.id }}">Details</a>
@@ -111,9 +111,9 @@
         <form method="post" action="/job/{{ job.id }}/status">
           <input type="hidden" name="redirect" value="{{ request.url.path }}?{{ request.url.query }}">
           <select name="status" onchange="this.form.submit()">
-            <option value="{{ job.status }}" selected>{{ job.status|title }}</option>
+            <option value="{{ job.status }}" selected>{{ job.status|marked("job") }}</option>
             {% for action in ["saved", "applied", "ignored", "new"] if action != job.status %}
-            <option value="{{ action }}">{{ action|title }}</option>
+            <option value="{{ action }}">{{ action|marked("job") }}</option>
             {% endfor %}
           </select>
         </form>

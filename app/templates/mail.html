@@ -22,7 +22,7 @@
     <select name="category" onchange="this.form.submit()">
       <option value="" {% if not category %}selected{% endif %}>All mail</option>
       {% for option in category_order %}
-      <option value="{{ option }}" {% if category == option %}selected{% endif %}>{{ category_labels.get(option, option) }}</option>
+      <option value="{{ option }}" {% if category == option %}selected{% endif %}>{{ option|marked }}</option>
       {% endfor %}
     </select>
   </div>
@@ -30,11 +30,11 @@
     <label>Contains</label>
     <select name="has" onchange="this.form.submit()">
       <option value="" {% if not has %}selected{% endif %}>Anything</option>
-      <option value="jobs" {% if has == "jobs" %}selected{% endif %}>Job postings</option>
-      <option value="norows" {% if has == "norows" %}selected{% endif %}>Alerts with no postings</option>
-      <option value="unstored" {% if has == "unstored" %}selected{% endif %}>Parsed, not stored</option>
-      <option value="followups" {% if has == "followups" %}selected{% endif %}>Follow-ups</option>
-      <option value="other" {% if has == "other" %}selected{% endif %}>Unclassified</option>
+      <option value="jobs" {% if has == "jobs" %}selected{% endif %}>🎯 Job postings</option>
+      <option value="norows" {% if has == "norows" %}selected{% endif %}>⚠️ Alerts with no postings</option>
+      <option value="unstored" {% if has == "unstored" %}selected{% endif %}>🧩 Parsed, not stored</option>
+      <option value="followups" {% if has == "followups" %}selected{% endif %}>👋 Follow-ups</option>
+      <option value="other" {% if has == "other" %}selected{% endif %}>📎 Unclassified</option>
     </select>
   </div>
   <div class="actions"><button type="submit" class="btn-primary btn-sm">Filter</button></div>
@@ -45,15 +45,20 @@
   <span class="tag accent">{{ mail_jobs }} posting{{ "s" if mail_jobs != 1 else "" }} extracted</span>
   <span class="tag good">{{ mail_matches }} match{{ "es" if mail_matches != 1 else "" }}</span>
   {% if empty_alerts %}
-  <a class="tag {% if has == 'norows' %}accent{% else %}warn{% endif %}" href="/?{{ mail_qs(has='norows', m='') }}">Alerts with no postings · {{ empty_alerts }}</a>
+  <a class="tag {% if has == 'norows' %}accent{% else %}warn{% endif %}" href="/?{{ mail_qs(has='norows', m='') }}">⚠️ Alerts with no postings · {{ empty_alerts }}</a>
   {% endif %}
   {% if unstored_extracts %}
-  <a class="tag {% if has == 'unstored' %}accent{% else %}warn{% endif %}" href="/?{{ mail_qs(has='unstored', m='') }}">Parsed, not stored · {{ unstored_extracts }}</a>
+  <a class="tag {% if has == 'unstored' %}accent{% else %}warn{% endif %}" href="/?{{ mail_qs(has='unstored', m='') }}">🧩 Parsed, not stored · {{ unstored_extracts }}</a>
   {% endif %}
   {% for key in category_order if category_counts.get(key) %}
-  <a class="tag {% if category == key %}accent{% endif %}" href="/?{{ mail_qs(category=key, m='') }}">{{ category_labels.get(key, key) }} · {{ category_counts[key] }}</a>
+  <a class="tag {% if category == key %}accent{% endif %}" href="/?{{ mail_qs(category=key, m='') }}">{{ key|marked }} · {{ category_counts[key] }}</a>
   {% endfor %}
   <span class="tag" title="j next email, k previous, o open in Gmail">j / k / o</span>
+</div>
+<div class="meta" style="margin:-4px 0 8px; gap:10px; flex-wrap:wrap">
+  {% for key in category_order %}
+  <span title="{{ category_labels.get(key, key) }}"><span class="ico" aria-hidden="true">{{ key|ico }}</span>{{ category_labels.get(key, key) }}</span>
+  {% endfor %}
 </div>
 
 {% if not messages %}
@@ -70,9 +75,9 @@
       {% for message in rows %}
       {% set jobs = jobs_by_mail.get(message.id, []) %}
       <a class="mail-row {% if selected and selected.id == message.id %}active{% endif %}" data-mail-row href="/?{{ mail_qs(m=message.id) }}">
-        <h3>{{ message.subject[:90] or "(no subject)" }}</h3>
+        <h3><span class="ico" aria-hidden="true">{{ message.category|ico }}</span>{{ message.subject[:90] or "(no subject)" }}</h3>
         <div class="meta">
-          <span class="tag {% if message.category in ('interview_invite','offer','next_step','assessment','recruiter_outreach') %}good{% elif message.category == 'job_alert' %}accent{% elif message.category == 'rejection' %}bad{% endif %}">{{ category_labels.get(message.category, message.category.replace("_", " ")|title) }}</span>
+          <span class="tag {% if message.category in ('interview_invite','offer','next_step','assessment','recruiter_outreach') %}good{% elif message.category == 'job_alert' %}accent{% elif message.category == 'rejection' %}bad{% endif %}">{{ message.category|marked }}</span>
           <span>{{ message.received_at | et("%I:%M %p") }}</span>
           {% if jobs %}
           <span class="tag {% if matched_by_mail.get(message.id, 0) %}good{% endif %}">{{ matched_by_mail.get(message.id, 0) }}/{{ jobs|length }}</span>
@@ -98,9 +103,9 @@
         <span class="sep">·</span>
         <span>{{ selected.received_at | et("%b %d, %I:%M %p ET") }}</span>
         <span class="sep">·</span>
-        <span class="tag {% if selected.category in ('interview_invite','offer','next_step','assessment','recruiter_outreach') %}good{% elif selected.category == 'job_alert' %}accent{% endif %}">{{ category_labels.get(selected.category, selected.category.replace("_", " ")|title) }}</span>
+        <span class="tag {% if selected.category in ('interview_invite','offer','next_step','assessment','recruiter_outreach') %}good{% elif selected.category == 'job_alert' %}accent{% endif %}">{{ selected.category|marked }}</span>
         {% if selected.email_type %}<span class="tag">{{ selected.email_type }}</span>{% endif %}
-        {% if selected.flagged_category %}<span class="tag warn">flagged → {{ category_labels.get(selected.flagged_category, selected.flagged_category) }}</span>{% endif %}
+        {% if selected.flagged_category %}<span class="tag warn">🚩 {{ selected.flagged_category|marked }}</span>{% endif %}
       </div>
       <div class="actions" style="margin-top:6px">
         <form method="post" action="/mail/{{ selected.id }}/reextract">
@@ -120,7 +125,7 @@
           <select name="category">
             <option value="">Wrong category…</option>
             {% for option in category_order %}
-            <option value="{{ option }}" {% if selected.flagged_category == option %}selected{% endif %}>{{ category_labels.get(option, option) }}</option>
+            <option value="{{ option }}" {% if selected.flagged_category == option %}selected{% endif %}>{{ option|marked }}</option>
             {% endfor %}
           </select>
           <button type="submit" class="btn-sm btn-ghost">Flag</button>
@@ -185,7 +190,7 @@
           <div class="card" style="margin:0">
             <h3>Classification</h3>
             <div class="kv" style="margin-top:10px">
-              <div class="k">Category</div><div>{{ category_labels.get(selected.category, selected.category.replace("_", " ")|title) }}</div>
+              <div class="k">Category</div><div>{{ selected.category|marked }}</div>
               <div class="k">Confidence</div><div>{{ "%.0f"|format((selected.confidence or 0) * 100) }}%</div>
               <div class="k">Reason</div><div>{{ selected.reason or "—" }}</div>
               <div class="k">Type</div><div>{{ selected.email_type or "—" }}</div>

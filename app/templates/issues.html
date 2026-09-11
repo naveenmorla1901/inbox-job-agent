@@ -87,7 +87,7 @@
         <tr>
           <td class="tight mono">{{ item.occurred_at | et("%b %d, %I:%M:%S %p ET") }}</td>
           <td class="tight"><span class="tag">{{ item.source }}</span></td>
-            <td class="tight"><span class="tag {% if item.severity == 'error' %}bad{% elif item.severity == 'warn' %}warn{% elif item.severity == 'info' %}accent{% endif %}">{{ item.severity }}</span></td>
+            <td class="tight"><span class="tag {% if item.severity == 'error' %}bad{% elif item.severity == 'warn' %}warn{% elif item.severity == 'info' %}accent{% endif %}">{{ item.severity|marked("severity") }}</span></td>
           <td>
             <b>{{ item.title }}</b>
             {% if item.message_id %}

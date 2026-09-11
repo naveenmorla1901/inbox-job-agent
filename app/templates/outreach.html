@@ -48,7 +48,7 @@
   <tbody>
   {% for item in items %}
   <tr {% if item.urgency == 'high' %}style="box-shadow:inset 3px 0 0 var(--bad)"{% endif %}>
-    <td class="tight"><span class="tag {% if item.kind in ('interview_invite','offer','next_step','assessment') %}good{% else %}accent{% endif %}">{{ item.kind.replace("_", " ")|title }}</span></td>
+    <td class="tight"><span class="tag {% if item.kind in ('interview_invite','offer','next_step','assessment') %}good{% else %}accent{% endif %}">{{ item.kind|marked }}</span></td>
     <td>
       <b>{{ item.subject or "(no subject)" }}</b>
       {% if item.action_required %}<div class="meta" style="color:var(--warn)">{{ item.action_required }}</div>{% endif %}
