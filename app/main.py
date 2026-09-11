@@ -13,8 +13,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, col, func, select
 
-from .applications import CLOSED_STATUSES, STATUS_RANK, create_from_job, stale_applications
-from .classify import FOLLOW_UP_KINDS, NOREPLY_RE
+from .applications import (
+    CLOSED_STATUSES,
+    STATUS_RANK,
+    create_from_job,
+    fill_blank_roles,
+    stale_applications,
+)
+from .classify import FOLLOW_UP_KINDS, JOB_ALERT, NOREPLY_RE
 from .config import ROOT, get_profile, get_settings
 from .db import get_engine, init_db
 from .gmail_client import gmail_token_status, host_setup, parse_gmail_push
@@ -41,7 +47,14 @@ from .pipeline import (
     start_gmail_watch,
 )
 from .probe import probe_apis
-from .reporting import CATEGORY_LABELS, CATEGORY_ORDER, application_funnel, build_breakdown, window_bounds
+from .reporting import (
+    CATEGORY_LABELS,
+    CATEGORY_ORDER,
+    application_funnel,
+    build_breakdown,
+    daily_brief,
+    window_bounds,
+)
 from .schedule import next_tick_epoch
 from .timefmt import et_datetime_value, et_day_label, fmt_et, group_by_et_day
 
@@ -250,6 +263,11 @@ def mail_bundle(
         )
     if has == "jobs":
         stmt = stmt.where(Message.jobs_found > 0)
+    elif has == "norows":
+        # A job alert the extractor read as empty: the digest shape was missed.
+        stmt = stmt.where(
+            col(Message.category).in_([JOB_ALERT]), Message.jobs_found == 0
+        )
     elif has == "followups":
         stmt = stmt.where(col(Message.category).in_(FOLLOW_UP_KINDS))
     elif has == "other":
@@ -326,6 +344,10 @@ def mail_page(
     category_counts: dict[str, int] = {}
     for row in messages:
         category_counts[row.category] = category_counts.get(row.category, 0) + 1
+    # Job alerts the extractor read as empty. Worth a Re-extract, not a silent skip.
+    empty_alerts = sum(
+        1 for row in messages if row.category == JOB_ALERT and not row.jobs_found
+    )
 
     def mail_qs(**overrides) -> str:
         params = {
@@ -379,6 +401,7 @@ def mail_page(
             "category_labels": CATEGORY_LABELS,
             "category_order": CATEGORY_ORDER,
             "category_counts": category_counts,
+            "empty_alerts": empty_alerts,
             "mail_jobs": sum(len(rows) for rows in jobs_by_mail.values()),
             "mail_matches": sum(matched_by_mail.values()),
             "mail_qs": mail_qs,
@@ -458,11 +481,14 @@ def overview_page(
     report = build_breakdown(session, days=days, since=since or None, until=until or None)
     start, end, _, _ = window_bounds(days=days, since=since or None, until=until or None)
     funnel = application_funnel(session, start, end, q=app_q)
+    fill_blank_roles(session, funnel.rows)
+    brief = daily_brief(session, start, end)
     return templates.TemplateResponse(
         request,
         "overview.html",
         {
             "report": report,
+            "brief": brief,
             "days": days,
             "since": since,
             "until": until,
@@ -971,6 +997,7 @@ def applications_page(
     if show == "open":
         stmt = stmt.where(Application.closed == False)  # noqa: E712
     applications = session.exec(stmt.order_by(col(Application.last_event_at).desc())).all()
+    fill_blank_roles(session, applications)
 
     events: dict[int, list[ApplicationEvent]] = {}
     if applications:
@@ -1075,6 +1102,25 @@ def mark_handled(
     if not item:
         raise HTTPException(404, "not found")
     item.handled = not item.handled
+    session.add(item)
+    session.commit()
+    return RedirectResponse(redirect, status_code=303)
+
+
+@app.post("/outreach/{item_id}/not-followup")
+def mark_not_followup(
+    item_id: int,
+    request: Request,
+    redirect: str = Form("/outreach"),
+    session: Session = Depends(db_session),
+):
+    """This mail should not sit on Follow-ups. Keep the row, drop it from that list."""
+    require_token(request)
+    item = session.get(Outreach, item_id)
+    if not item:
+        raise HTTPException(404, "not found")
+    item.handled = True
+    item.kind = "other"
     session.add(item)
     session.commit()
     return RedirectResponse(redirect, status_code=303)

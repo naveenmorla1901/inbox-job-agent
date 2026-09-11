@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_model: str = "openai/gpt-oss-20b"
     deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-flash"
     nvidia_api_key: str = ""
     nvidia_model: str = "nvidia/nemotron-3-ultra-550b-a55b"
     openrouter_api_key: str = ""

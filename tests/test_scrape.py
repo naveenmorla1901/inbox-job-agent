@@ -267,15 +267,66 @@ def test_login_wall_host_detects_linkedin_and_indeed():
 
     assert login_wall_host("https://www.linkedin.com/jobs/view/123")
     assert login_wall_host("https://www.indeed.com/viewjob?jk=abc")
+    assert login_wall_host("https://www.ihire.com/job/1")
+    assert login_wall_host("https://jobs.jobs2web.com/acme")
     assert not login_wall_host("https://jobs.example.com/ai-engineer")
     walls = {
         "a": ScrapedJob(status="blocked", final_url="https://www.linkedin.com/jobs/view/123"),
         "b": ScrapedJob(status="blocked", final_url="https://www.indeed.com/viewjob?jk=x"),
         "c": ScrapedJob(status="error", final_url="https://careers.example.com/job/9"),
+        "d": ScrapedJob(status="blocked", final_url="https://www.ihire.com/job/1"),
+        "e": ScrapedJob(status="blocked", final_url=""),
     }
     notable = notable_scrape_failures(walls)
     assert len(notable) == 1
     assert notable[0].final_url.endswith("/job/9")
+
+
+def test_reader_retries_login_wall_boards_through_the_guest_fragment(monkeypatch):
+    """LinkedIn 403s a browser UA; the reader plus the guest fragment still reads it."""
+    from app.extract_jobs import JobCandidate
+    from app.scrape import UA, fetch_job
+    from app import scrape as scrape_mod
+
+    guest = "Machine Learning Engineer at Northwind. " + ("pytorch airflow " * 40)
+
+    class Fake:
+        def __init__(self, status, text, url):
+            self.status_code = status
+            self.text = text
+            self.url = url
+            self.request = type("Req", (), {"headers": {"user-agent": UA}})()
+
+    def fake_get(_client, url, _headers):
+        if url.startswith("https://r.jina.ai/") and "jobs-guest" in url:
+            return Fake(200, guest, url)
+        return Fake(403, "Sign in to view this job", url)
+
+    monkeypatch.setattr(scrape_mod, "_get", fake_get)
+    job = fetch_job(
+        JobCandidate(
+            url="https://www.linkedin.com/jobs/view/3901234567",
+            url_key="linkedin:3901234567",
+            title="Machine Learning Engineer",
+            company="Northwind",
+            source="linkedin",
+        )
+    )
+    assert job.ok
+    assert job.extraction == "reader"
+    assert "pytorch" in job.description
+
+
+def test_a_posting_with_no_link_is_never_fetched():
+    from app.extract_jobs import JobCandidate
+    from app.scrape import fetch_all
+
+    scraped = fetch_all(
+        [JobCandidate(url="", url_key="card:apple:senior ml engineer", title="Senior ML Engineer")]
+    )
+    page = scraped["card:apple:senior ml engineer"]
+    assert page.status == "skipped"
+    assert page.extraction == "email"
 
 
 def test_reader_fallback_recovers_a_blocked_company_site(monkeypatch):

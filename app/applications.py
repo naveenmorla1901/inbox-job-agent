@@ -62,6 +62,8 @@ COMPANY_ONLY_PATTERNS = (
     re.compile(r"your application (?:at|with)\s+(?P<company>[^-–—|]+)$", re.I),
     # "Thanks for applying to Adobe" - what follows is the employer, not the role.
     re.compile(r"thank(?:s| you)?(?: very much)? for (?:applying|your application|your interest)(?:\s+(?:to|at|with|in))\s+(?P<company>[^-–—|!?.]+)", re.I),
+    re.compile(r"thanks? for considering\s+(?P<company>[^-–—|!?.]+)", re.I),
+    re.compile(r"you(?:'ve| have) started your (?:job )?application", re.I),
     re.compile(r"^(?:applying|application) (?:to|at|with)\s+(?P<company>[^-–—|!?.]+)", re.I),
     re.compile(r"your application was sent to\s+(?P<company>[^-–—|!?.]+)", re.I),
 )
@@ -74,6 +76,18 @@ COMPANY_TAIL = re.compile(
 
 ROLE_ONLY = (
     re.compile(r"(?:application|applying|interview|assessment)(?: for| to)(?: the)? (?P<role>[^.\n,]{3,60}?)(?: position| role)?[.\n,]", re.I),
+    re.compile(
+        r"^(?P<role>[^:]{8,70}?)\s*[-–—|]\s*(?:next steps?|application|update|interview)\b",
+        re.I,
+    ),
+)
+TITLE_LIKE_ROLE = re.compile(
+    r"\b(engineer|scientist|analyst|developer|manager|designer|researcher|architect)\b",
+    re.I,
+)
+NOT_A_ROLE_SUBJECT = re.compile(
+    r"\b(thank|thanks|alert|alerts|opportunit|newsletter|verification|code|sign in)\b",
+    re.I,
 )
 
 COMPANY_NOISE = re.compile(
@@ -180,7 +194,9 @@ def extract_company_role(email: ParsedEmail, result: Classification) -> tuple[st
         for pattern in COMPANY_ONLY_PATTERNS:
             match = pattern.search(subject)
             if match:
-                company = match.group("company").strip()
+                captured = (match.groupdict().get("company") or "").strip()
+                if captured:
+                    company = captured
                 break
 
     if not (company and role):
@@ -204,10 +220,23 @@ def extract_company_role(email: ParsedEmail, result: Classification) -> tuple[st
             if match:
                 role = match.group("role").strip(TRAILING_PUNCT)
                 break
+    if (
+        not role
+        and TITLE_LIKE_ROLE.search(subject)
+        and not NOT_A_ROLE_SUBJECT.search(subject)
+    ):
+        role = subject.strip(TRAILING_PUNCT)
 
     # "Thanks for applying to ONEOK" reads as a role to the role-only patterns.
     if role and normalise_role(role) == normalise_role(company):
         role = ""
+    # "Machine Learning Engineer - application update" is a title, not a company.
+    if (
+        role
+        and normalise_role(role) in ROLE_STOPWORDS
+        and TITLE_LIKE_ROLE.search(company)
+    ):
+        role, company = company, ""
 
     company = COMPANY_LEAD.sub("", company)
     if is_generic_company(company):
@@ -455,3 +484,36 @@ def stale_applications(session: Session, days: int = 14) -> list[Application]:
         .where(Application.closed == False, Application.last_event_at < cutoff)  # noqa: E712
         .order_by(col(Application.last_event_at))
     ).all()
+
+
+def fill_blank_roles(session: Session, applications: list[Application]) -> int:
+    """Re-parse the latest mail subject when an acknowledgment never named a role."""
+    blanks = [row for row in applications if row.id and not (row.role or "").strip()]
+    if not blanks:
+        return 0
+    ids = [row.id for row in blanks]
+    events = session.exec(
+        select(ApplicationEvent)
+        .where(col(ApplicationEvent.application_id).in_(ids))
+        .order_by(col(ApplicationEvent.occurred_at).desc())
+    ).all()
+    latest: dict[int, ApplicationEvent] = {}
+    for event in events:
+        latest.setdefault(event.application_id, event)
+
+    changed = 0
+    for row in blanks:
+        event = latest.get(row.id or 0)
+        if not event or not event.subject:
+            continue
+        mail = ParsedEmail(id="", subject=event.subject, text=event.summary or "")
+        _, role = extract_company_role(mail, Classification())
+        if not role:
+            continue
+        row.role = role
+        row.match_key = match_key(row.company, role)
+        session.add(row)
+        changed += 1
+    if changed:
+        session.commit()
+    return changed

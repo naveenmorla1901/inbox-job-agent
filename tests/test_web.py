@@ -11,7 +11,7 @@ from app.config import get_settings
 from app.gmail_client import parse_gmail_push
 from app.llm import LLM
 from app.main import app
-from app.models import Issue, Job, Message
+from app.models import Application, Issue, Job, Message, Outreach
 from app.pipeline import STATE_CURSOR, process_email
 from app.timefmt import et_day_label, group_by_et_day
 from tests.test_extract import alert_email
@@ -268,6 +268,7 @@ def test_charts_and_overview_funnel_pages(client):
     assert overview.status_code == 200
     assert b"Application funnel" in overview.content
     assert b"Search applications" in overview.content
+    assert b"Needs attention" in overview.content
     issues = test_client.get("/issues")
     assert b"Probe APIs" in issues.content
     apps = test_client.get("/applications")
@@ -314,6 +315,55 @@ def test_applications_page_is_a_sheet(client):
     body = response.text
     assert "<h1>Applications</h1>" not in body
     assert "In review" in body or "in_review" in body.lower() or "In Review" in body
+
+
+def test_alerts_with_no_postings_are_callable_out(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        session.add(
+            Message(id="empty1", subject="Candidate New Job Alerts", category="job_alert")
+        )
+        session.commit()
+    page = test_client.get("/?days=30")
+    assert b"Alerts with no postings" in page.content
+    assert b"j / k / o" in page.content
+    filtered = test_client.get("/?days=30&has=norows")
+    assert b"Candidate New Job Alerts" in filtered.content
+
+
+def test_applications_label_blank_roles_as_unknown(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        session.add(Application(company="Cisco", role="", match_key="cisco|"))
+        session.commit()
+    page = test_client.get("/applications")
+    assert b"Unknown role" in page.content
+
+
+def test_not_followup_drops_item_from_the_list(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        session.add(Message(id="o1", subject="Recruiter note"))
+        session.add(
+            Outreach(
+                message_id="o1",
+                kind="recruiter_outreach",
+                subject="Quick chat?",
+                company="Acme",
+            )
+        )
+        session.commit()
+    page = test_client.get("/outreach")
+    assert b"Not a follow-up" in page.content
+    assert b"Quick chat?" in page.content
+    response = test_client.post(
+        "/outreach/1/not-followup",
+        data={"redirect": "/outreach"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    page = test_client.get("/outreach")
+    assert b"Quick chat?" not in page.content
 
 
 def test_overview_puts_category_table_in_a_grid(client):

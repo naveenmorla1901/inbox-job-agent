@@ -45,8 +45,9 @@
       {% set timeline = events.get(application.id, []) %}
       <tr>
         <td>
-          {% if application.job_url %}<a href="{{ application.job_url }}" target="_blank" rel="noopener"><b>{{ application.role or "Role unknown" }}</b></a>
-          {% else %}<b>{{ application.role or "Role unknown" }}</b>{% endif %}
+          {% if application.job_url %}<a href="{{ application.job_url }}" target="_blank" rel="noopener"><b>{{ application.role or "Unknown role" }}</b></a>
+          {% else %}<b>{{ application.role or "Unknown role" }}</b>{% endif %}
+          {% if not application.role %}<div class="meta">acknowledgment only — no role named</div>{% endif %}
           {% if application.id in stale %}<div class="meta" style="color:var(--warn)">silent 14+ days</div>{% endif %}
           {% if application.next_action %}<div class="meta" style="color:var(--warn)">{{ application.next_action }}</div>{% endif %}
         </td>

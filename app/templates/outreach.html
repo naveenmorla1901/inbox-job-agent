@@ -66,6 +66,12 @@
           <input type="hidden" name="redirect" value="/outreach?show={{ show }}&days={{ days }}&who={{ who }}">
           <button type="submit" class="btn-sm {% if item.handled %}btn-ghost{% else %}btn-primary{% endif %}">{{ "Reopen" if item.handled else "Handled" }}</button>
         </form>
+        {% if not item.handled %}
+        <form method="post" action="/outreach/{{ item.id }}/not-followup">
+          <input type="hidden" name="redirect" value="/outreach?show={{ show }}&days={{ days }}&who={{ who }}">
+          <button type="submit" class="btn-sm btn-ghost">Not a follow-up</button>
+        </form>
+        {% endif %}
       </div>
     </td>
   </tr>

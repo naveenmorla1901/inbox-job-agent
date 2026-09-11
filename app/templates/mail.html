@@ -31,6 +31,7 @@
     <select name="has" onchange="this.form.submit()">
       <option value="" {% if not has %}selected{% endif %}>Anything</option>
       <option value="jobs" {% if has == "jobs" %}selected{% endif %}>Job postings</option>
+      <option value="norows" {% if has == "norows" %}selected{% endif %}>Alerts with no postings</option>
       <option value="followups" {% if has == "followups" %}selected{% endif %}>Follow-ups</option>
       <option value="other" {% if has == "other" %}selected{% endif %}>Unclassified</option>
     </select>
@@ -42,9 +43,13 @@
   <span class="tag">{{ messages|length }} email{{ "s" if messages|length != 1 else "" }}</span>
   <span class="tag accent">{{ mail_jobs }} posting{{ "s" if mail_jobs != 1 else "" }} extracted</span>
   <span class="tag good">{{ mail_matches }} match{{ "es" if mail_matches != 1 else "" }}</span>
+  {% if empty_alerts %}
+  <a class="tag {% if has == 'norows' %}accent{% else %}warn{% endif %}" href="/?{{ mail_qs(has='norows', m='') }}">Alerts with no postings · {{ empty_alerts }}</a>
+  {% endif %}
   {% for key in category_order if category_counts.get(key) %}
   <a class="tag {% if category == key %}accent{% endif %}" href="/?{{ mail_qs(category=key, m='') }}">{{ category_labels.get(key, key) }} · {{ category_counts[key] }}</a>
   {% endfor %}
+  <span class="tag" title="j next email, k previous, o open in Gmail">j / k / o</span>
 </div>
 
 {% if not messages %}
@@ -60,7 +65,7 @@
       <div class="day-head">{{ day }}</div>
       {% for message in rows %}
       {% set jobs = jobs_by_mail.get(message.id, []) %}
-      <a class="mail-row {% if selected and selected.id == message.id %}active{% endif %}" href="/?{{ mail_qs(m=message.id) }}">
+      <a class="mail-row {% if selected and selected.id == message.id %}active{% endif %}" data-mail-row href="/?{{ mail_qs(m=message.id) }}">
         <h3>{{ message.subject[:90] or "(no subject)" }}</h3>
         <div class="meta">
           <span class="tag {% if message.category in ('interview_invite','offer','next_step','assessment','recruiter_outreach') %}good{% elif message.category == 'job_alert' %}accent{% elif message.category == 'rejection' %}bad{% endif %}">{{ category_labels.get(message.category, message.category.replace("_", " ")|title) }}</span>
@@ -253,4 +258,32 @@
   </div>
 </div>
 {% endif %}
+
+<script>
+// Keyboard walk through the list: j next, k previous, o opens the thread in Gmail.
+(function () {
+  const rows = Array.from(document.querySelectorAll("[data-mail-row]"));
+  if (!rows.length) return;
+  const active = rows.findIndex((row) => row.classList.contains("active"));
+  const gmail = {{ ("https://mail.google.com/mail/u/0/#inbox/" ~ selected.id if selected else "") | tojson }};
+
+  document.addEventListener("keydown", (event) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const tag = (event.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select" || event.target.isContentEditable) return;
+
+    if (event.key === "j" || event.key === "k") {
+      const step = event.key === "j" ? 1 : -1;
+      const next = rows[Math.min(rows.length - 1, Math.max(0, (active < 0 ? 0 : active) + step))];
+      if (next) {
+        event.preventDefault();
+        window.location.href = next.getAttribute("href");
+      }
+    } else if (event.key === "o" && gmail) {
+      event.preventDefault();
+      window.open(gmail, "_blank", "noopener");
+    }
+  });
+})();
+</script>
 {% endblock %}

@@ -1,4 +1,4 @@
-"""Chat completion over whichever free tier is still answering.
+"""Chat completion over free keys first, then paid DeepSeek as last resort.
 
 Each task runs down an ordered chain of `provider:model` pairs. A provider that
 rate limits is parked for a cooldown so the rest of the run stops paying for its
@@ -70,7 +70,7 @@ PROVIDERS: dict[str, Provider] = {
         "deepseek",
         "https://api.deepseek.com/v1/chat/completions",
         "deepseek_api_key",
-        "deepseek-chat",
+        "deepseek-flash",
     ),
     "nvidia": Provider(
         "nvidia",
@@ -94,10 +94,9 @@ PROVIDERS: dict[str, Provider] = {
     ),
 }
 
-# Cheap/fast first for high-volume triage; big-context Gemini first for extraction
-# (whole-email digest parsing and long job pages both benefit from the large window).
-CLASSIFY_ORDER = ("groq", "gemini", "gemini2", "nvidia", "deepseek", "openrouter")
-EXTRACT_ORDER = ("gemini", "gemini2", "groq", "nvidia", "deepseek", "openrouter")
+# Free keys first. DeepSeek is paid, so it is last when the free tiers 429 or fail.
+CLASSIFY_ORDER = ("groq", "gemini", "gemini2", "openrouter", "nvidia", "deepseek")
+EXTRACT_ORDER = ("gemini", "gemini2", "groq", "openrouter", "nvidia", "deepseek")
 TASK_ORDER = {CLASSIFY: CLASSIFY_ORDER, EXTRACT: EXTRACT_ORDER}
 GEMINI_NAMES = frozenset({"gemini", "gemini2"})
 
@@ -163,6 +162,7 @@ class LLM:
             return self.settings.gemini_model or provider.default_model
         return {
             "groq": self.settings.groq_model,
+            "deepseek": self.settings.deepseek_model,
             "nvidia": self.settings.nvidia_model,
             "openrouter": self.settings.openrouter_model,
             "ollama": self.settings.ollama_model,
@@ -295,8 +295,8 @@ class LLM:
                 if status in AUTH_STATUS:
                     self._park(provider, 3600, f"rejected the key ({status})")
                     return ""
-                if status == 404:
-                    self._park(provider, 3600, "endpoint or model not found (404)")
+                if status in (404, 410):
+                    self._park(provider, 3600, f"endpoint or model gone ({status})")
                     return ""
                 if status in RETRY_STATUS and attempt < MAX_ATTEMPTS:
                     time.sleep(BACKOFF_SECONDS * attempt)
@@ -434,6 +434,9 @@ class LLM:
         payload: dict[str, Any] = {"model": model, "messages": messages, "temperature": 0.1}
         if provider.json_mode:
             payload["response_format"] = {"type": "json_object"}
+        if provider.name == "deepseek":
+            # V4.1 Flash defaults to thinking mode; disable it for short JSON triage.
+            payload["thinking"] = {"type": "disabled"}
         headers = {"Authorization": f"Bearer {self.key_for(provider)}"}
         if provider.name == "openrouter":
             headers["HTTP-Referer"] = "https://github.com/naveenmorla1901/inbox-job-agent"

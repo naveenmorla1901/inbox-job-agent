@@ -44,6 +44,12 @@ LOGIN_WALL_HOSTS = (
     "ziprecruiter.com",
     "monster.com",
     "dice.com",
+    "ihire.com",
+    "jobseeker.com",
+    "jobseekers.com",
+    "jobs2web.com",
+    "jobright.ai",
+    "jobright.com",
 )
 GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards/{board}/jobs/{job_id}?content=true"
 LEVER_API = "https://api.lever.co/v0/postings/{company}/{job_id}?mode=json"
@@ -65,6 +71,14 @@ BLOCKED_NOISE = re.compile(
     r"new to linkedin|join now|get hired without the hassle|"
     r"your activity and behavior on this site made us think that you are a bot|"
     r"radware captcha)",
+    re.I,
+)
+# The reader will happily return a sign-in page as if it were the posting.
+LOGIN_WALL_RE = re.compile(
+    r"(sign in to view (?:this|the) job|join linkedin to|sign in to see who|"
+    r"create an account to (?:apply|continue|view)|"
+    r"please (?:sign in|log in) to (?:continue|apply|view)|"
+    r"security check|verify you are a human|additional verification required)",
     re.I,
 )
 INTERSTITIAL_NOISE = re.compile(
@@ -562,30 +576,51 @@ def login_wall_host(url: str) -> bool:
 
 
 def notable_scrape_failures(scraped: dict[str, ScrapedJob]) -> list[ScrapedJob]:
-    """Login walls are expected. Only unexpected blocked/error fetches belong on Issues."""
+    """Blocked boards are expected. Only unexpected fetch errors belong on Issues."""
     out: list[ScrapedJob] = []
     for page in scraped.values():
-        if getattr(page, "status", "") not in {"error", "blocked"}:
-            continue
-        url = getattr(page, "final_url", "") or ""
-        if page.status == "blocked" and login_wall_host(url):
+        if getattr(page, "status", "") != "error":
             continue
         out.append(page)
     return out
 
 
-def _try_reader(client: httpx.Client, candidate: JobCandidate) -> ScrapedJob | None:
-    """Last resort for company sites that 403 a normal browser UA. Skip login-wall boards."""
+def _reader_targets(candidate: JobCandidate) -> list[str]:
+    """URLs worth handing to the reader, best first.
+
+    Login-wall boards are included: the reader fetches from its own server, and
+    these boards serve a public guest page to non-browser clients often enough to
+    be worth one request. LinkedIn also exposes the guest fragment directly, and
+    that one is plain HTML with the whole description in it.
+    """
     url = unwrap_url(candidate.url)
-    if not url or login_wall_host(url):
-        return None
-    resp = _get(client, JINA_READER + url, HEADERS)
-    if resp is None or resp.status_code >= 400 or len(resp.text or "") < 200:
-        return None
-    if BLOCKED_NOISE.search(resp.text[:2000]):
-        return None
-    text = html_to_text(resp.text) if "<html" in resp.text[:200].lower() else clean_text(resp.text)
-    if len(text) < 80:
+    if not url:
+        return []
+    targets = [url]
+    if candidate.url_key.startswith("linkedin:"):
+        job_id = candidate.url_key.split(":", 1)[1]
+        targets.insert(0, LINKEDIN_GUEST.format(job_id=job_id))
+    return targets
+
+
+def _try_reader(client: httpx.Client, candidate: JobCandidate) -> ScrapedJob | None:
+    """Last resort for pages a normal browser UA cannot read: fetch via r.jina.ai."""
+    url = text = ""
+    for target in _reader_targets(candidate):
+        resp = _get(client, JINA_READER + target, HEADERS)
+        if resp is None or resp.status_code >= 400 or len(resp.text or "") < 200:
+            continue
+        if BLOCKED_NOISE.search(resp.text[:2000]) or LOGIN_WALL_RE.search(resp.text[:2000]):
+            continue
+        body = (
+            html_to_text(resp.text)
+            if "<html" in resp.text[:200].lower()
+            else clean_text(resp.text)
+        )
+        if len(body) >= 80:
+            url, text = target, body
+            break
+    if not text:
         return None
     job = ScrapedJob(
         title=(candidate.title or "")[:200],
@@ -797,6 +832,15 @@ def fetch_all(
 ) -> dict[str, ScrapedJob]:
     if not candidates:
         return {}
+    # A posting named in the email with no link of its own has nothing to fetch.
+    linkless = {
+        c.url_key: ScrapedJob(status="skipped", extraction="email")
+        for c in candidates
+        if not unwrap_url(c.url)
+    }
+    fetchable = [c for c in candidates if c.url_key not in linkless]
+    if not fetchable:
+        return linkless
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = pool.map(lambda c: (c.url_key, fetch_job(c, timeout)), candidates)
-        return dict(results)
+        results = pool.map(lambda c: (c.url_key, fetch_job(c, timeout)), fetchable)
+        return {**linkless, **dict(results)}

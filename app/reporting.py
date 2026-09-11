@@ -17,6 +17,7 @@ from .classify import (
     RECRUITER,
     REJECTION,
 )
+from .applications import stale_applications
 from .models import Application, Job, Message, Outreach
 
 CATEGORY_LABELS = {
@@ -294,4 +295,52 @@ def application_funnel(
         offer_rate=offers / base,
         peak=max([counts.get(status, 0) for status in (*FUNNEL_STAGES, *FUNNEL_EXITS)] + [1]),
         rows=rows[:80],
+    )
+
+
+@dataclass
+class DailyBrief:
+    new_matches: list[Job] = field(default_factory=list)
+    open_followups: list[Outreach] = field(default_factory=list)
+    stale_apps: list[Application] = field(default_factory=list)
+    saved_jobs: list[Job] = field(default_factory=list)
+
+
+def daily_brief(session: Session, start: datetime, end: datetime) -> DailyBrief:
+    """What to act on: new matches, unanswered follow-ups, quiet apps, saved postings."""
+    new_matches = session.exec(
+        select(Job)
+        .where(
+            Job.received_at >= start,
+            Job.received_at < end,
+            Job.matched == True,  # noqa: E712
+            Job.duplicate_of == None,  # noqa: E711
+        )
+        .order_by(col(Job.score).desc())
+        .limit(8)
+    ).all()
+    open_followups = session.exec(
+        select(Outreach)
+        .where(Outreach.handled == False, col(Outreach.kind).in_(FOLLOW_UP_KINDS))  # noqa: E712
+        .order_by(col(Outreach.received_at).desc())
+        .limit(8)
+    ).all()
+    saved_jobs = session.exec(
+        select(Job)
+        .where(
+            Job.received_at >= start,
+            Job.received_at < end,
+            Job.status == "saved",
+        )
+        .order_by(col(Job.score).desc())
+        .limit(8)
+    ).all()
+    # A row with no role is a bare acknowledgment: there is nothing to chase, so it
+    # stays on the tracker but off the action list.
+    stale = [row for row in stale_applications(session) if (row.role or "").strip()]
+    return DailyBrief(
+        new_matches=list(new_matches),
+        open_followups=list(open_followups),
+        stale_apps=stale[:8],
+        saved_jobs=list(saved_jobs),
     )

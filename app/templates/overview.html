@@ -18,6 +18,74 @@
   <div class="actions"><button type="submit" class="btn-primary btn-sm">Apply</button></div>
 </form>
 
+<div class="dash-grid">
+  <div class="card">
+    <h3>Needs attention</h3>
+    <div class="sub" style="margin:2px 0 6px; color:var(--muted); font-size:12px">New matches, open follow-ups, and applications that went quiet</div>
+    {% if brief.new_matches %}
+    <table class="compact">
+      <thead><tr><th>New matches</th><th>Company</th><th style="width:56px">Score</th></tr></thead>
+      <tbody>
+      {% for job in brief.new_matches %}
+      <tr>
+        <td><a href="/job/{{ job.id }}">{{ job.title[:64] or "Untitled" }}</a></td>
+        <td>{{ job.company[:32] }}</td>
+        <td>{{ "%.2f"|format(job.score) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if brief.open_followups %}
+    <table class="compact" style="margin-top:8px">
+      <thead><tr><th>Open follow-ups</th><th>Who</th></tr></thead>
+      <tbody>
+      {% for item in brief.open_followups %}
+      <tr>
+        <td><a href="/outreach">{{ item.subject[:64] or item.kind.replace("_", " ")|title }}</a></td>
+        <td>{{ item.company or item.person or "—" }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if brief.stale_apps %}
+    <table class="compact" style="margin-top:8px">
+      <thead><tr><th>Silent 14+ days</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for application in brief.stale_apps %}
+      <tr>
+        <td><a href="/applications">{{ application.role }} · {{ application.company }}</a></td>
+        <td>{{ application.status.replace("_", " ")|title }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if not brief.new_matches and not brief.open_followups and not brief.stale_apps %}
+    <p class="lede">Nothing waiting in this window.</p>
+    {% endif %}
+  </div>
+  {% if brief.saved_jobs %}
+  <div class="card">
+    <h3>Saved to apply</h3>
+    <div class="sub" style="margin:2px 0 6px; color:var(--muted); font-size:12px">Jobs you marked Saved in this window</div>
+    <table class="compact">
+      <thead><tr><th>Role</th><th>Company</th><th style="width:56px">Score</th></tr></thead>
+      <tbody>
+      {% for job in brief.saved_jobs %}
+      <tr>
+        <td><a href="/job/{{ job.id }}">{{ job.title[:64] or "Untitled" }}</a></td>
+        <td>{{ job.company[:32] }}</td>
+        <td>{{ "%.2f"|format(job.score) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
 <div class="kpis">
   <div class="kpi"><div class="n">{{ report.messages }}</div><div class="l">Emails</div></div>
   <div class="kpi accent"><div class="n">{{ report.jobs_stored }}</div><div class="l">Postings</div></div>
@@ -129,7 +197,7 @@
       <tbody>
       {% for application in funnel.rows %}
       <tr>
-        <td>{% if application.job_url %}<a href="{{ application.job_url }}" target="_blank" rel="noopener">{{ application.role or "Role unknown" }}</a>{% else %}{{ application.role or "Role unknown" }}{% endif %}</td>
+        <td>{% if application.job_url %}<a href="{{ application.job_url }}" target="_blank" rel="noopener">{{ application.role or "Unknown role" }}</a>{% else %}{{ application.role or "Unknown role" }}{% endif %}</td>
         <td>{{ application.company }}</td>
         <td><span class="tag {% if application.status in ('interview', 'offer', 'next_step') %}good{% elif application.status == 'rejected' %}bad{% endif %}">{{ application.status.replace("_", " ")|title }}</span></td>
         <td class="mono">{{ application.last_event_at | et("%b %d") }}</td>

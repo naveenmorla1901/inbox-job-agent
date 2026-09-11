@@ -2,7 +2,12 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app import db, pipeline
-from app.applications import create_from_job, extract_company_role, normalise_company
+from app.applications import (
+    create_from_job,
+    extract_company_role,
+    fill_blank_roles,
+    normalise_company,
+)
 from app.classify import Classification, classify_rules
 from app.config import get_profile, get_settings
 from app.llm import LLM
@@ -269,6 +274,45 @@ def test_role_and_company_split_on_ats_reference_subjects():
     company, role = extract_company_role(mail, Classification())
     assert company.startswith("DLA Piper")
     assert "Data Scientist" in role
+
+
+def test_thanks_for_considering_keeps_the_application():
+    mail = plain_email(
+        "noreply@cisco.com",
+        "Thanks for Considering Cisco",
+        "Thank you for your interest.",
+        name="Cisco Careers",
+    )
+    company, role = extract_company_role(mail, Classification())
+    assert company == "Cisco"
+    assert role == ""
+
+
+def test_title_before_next_steps_becomes_the_role():
+    mail = plain_email(
+        "jobs@example.com",
+        "Engineering / Platform Professional - next steps",
+        "Please complete the next step.",
+        name="Example Talent",
+    )
+    _company, role = extract_company_role(mail, Classification())
+    assert "Platform Professional" in role
+
+
+def test_blank_role_is_filled_from_the_latest_subject(session):
+    application = Application(company="Acme", role="", match_key="acme|")
+    session.add(application)
+    session.flush()
+    session.add(
+        ApplicationEvent(
+            application_id=application.id,
+            kind="submitted",
+            subject="Machine Learning Engineer - application update",
+        )
+    )
+    session.commit()
+    fill_blank_roles(session, [application])
+    assert application.role == "Machine Learning Engineer"
 
 
 def test_classification_still_drives_the_status(session):
