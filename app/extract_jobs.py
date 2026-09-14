@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import re
+import zlib
 from dataclasses import dataclass
 from urllib.parse import parse_qs, unquote
 
@@ -62,6 +63,7 @@ JOB_HOSTS = {
     "ihire.com": "ihire",
     "twine.net": "twine",
     "zoom.us": "zoom",
+    "ultipro.com": "ultipro",
 }
 
 # URL paths that look like a single posting rather than a search page.
@@ -102,6 +104,7 @@ ID_PARAMS = (
     "vjk",
     "guid",
     "j",
+    "opportunityId",
 )
 WEAK_ID_PARAMS = ("id",)
 
@@ -126,6 +129,8 @@ CLICK_HOST_HINT = (
     "pageuppeople.com",
     "redirect.twinehq.com",
     "api.clinchtalent.com",
+    "ukgjobalerts.com",
+    "daliajobs.com",
 )
 
 LOCATION_HINT = re.compile(
@@ -177,7 +182,7 @@ JUNK_TITLE = re.compile(
     re.I,
 )
 APPLY_CTA = re.compile(
-    r"^(apply now|apply\b|view job|see job|learn more|read more|"
+    r"^(apply now|apply\b|view job|see job|view (all )?opportunit(y|ies)|learn more|read more|"
     r"(?:1|one)[\s-]?click apply|quick apply|easy apply)\b",
     re.I,
 )
@@ -225,6 +230,11 @@ def unwrap_url(url: str, depth: int = 4) -> str:
             url = aws
             continue
 
+        ukg = _ukg_click_dest(url)
+        if ukg and ukg != url:
+            url = ukg
+            continue
+
         parsed = _urlparse(url)
         params = parse_qs(parsed.query or "")
         nested = ""
@@ -268,6 +278,24 @@ def _haystack_go(url: str) -> str:
         job_id = params["j"][0]
         return f"https://haystack.cv/go?j={job_id}"
     return ""
+
+
+def _ukg_click_dest(url: str) -> str:
+    """UKG Pro job-alert click wrapper: `/c/<token>` where <token> is url-safe base64
+    of a zlib-compressed query string carrying the real destination in `l=`.
+    Decodes to a recruiting.ultipro.com OpportunityDetail URL."""
+    if not host_of(url).endswith("ukgjobalerts.com"):
+        return ""
+    token = (_urlparse(url).path or "").rsplit("/", 1)[-1]
+    if not token:
+        return ""
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+        payload = zlib.decompress(raw).decode("utf-8", "ignore")
+    except Exception:
+        return ""
+    dest = unquote(parse_qs(payload).get("l", [""])[0])
+    return dest if dest.lower().startswith("http") else ""
 
 
 def _encoded_redirect_dest(url: str) -> str:
@@ -350,6 +378,11 @@ def is_job_url(url: str) -> bool:
         re.I,
     ):
         return False
+    # UltiPro (UKG) job boards share one board UUID across every posting; only an
+    # OpportunityDetail page (or opportunityId param) is an actual posting. The bare
+    # board URL is the "View Opportunities" search link and must not become a row.
+    if source_of(url) == "ultipro":
+        return "/opportunitydetail" in path.lower() or "opportunityid" in (parsed.query or "").lower()
     # An ATS id in the query is a posting no matter whose domain hosts the page.
     if any(p in params for p in ID_PARAMS):
         return True
@@ -780,6 +813,11 @@ def extract_from_email(email: ParsedEmail, limit: int | None = 25) -> list[JobCa
             anchor_text = clean_text(anchor.get_text("\n"))
             if is_footer_link(anchor_text, href) or is_footer_link(anchor_text, url):
                 continue
+            # An UltiPro link we resolved to a non-posting board page (a search,
+            # "view all opportunities", or subscriptions) is navigation, not a job.
+            # Scoped to ultipro so other ATS click-trackers keep their titled cards.
+            if source_of(url) == "ultipro" and not is_job_url(url):
+                continue
             lines = _container_lines(anchor)
             if not lines and is_click_tracker(href):
                 lines = _previous_sibling_card_lines(anchor)
@@ -790,7 +828,7 @@ def extract_from_email(email: ParsedEmail, limit: int | None = 25) -> list[JobCa
             )
             if not keep:
                 continue
-            if is_click_tracker(href) and not is_job_url(href):
+            if is_click_tracker(href) and not is_job_url(url):
                 url = href
             key = canonical_key(url)
             title, company, location = _guess_fields(anchor_text, lines)
@@ -841,8 +879,18 @@ def extract_from_email(email: ParsedEmail, limit: int | None = 25) -> list[JobCa
             ):
                 continue
             existing = found.get(key)
-            if existing and len(existing.title) >= len(title):
-                continue
+            if existing:
+                # One posting can appear under several anchors (title link + a
+                # "requisition"/department link on the same OpportunityDetail URL).
+                # Prefer a title that reads like a role over one that does not;
+                # otherwise fall back to keeping the longer title.
+                old_role = bool(TITLE_ROLE.search(existing.title or ""))
+                new_role = bool(TITLE_ROLE.search(title or ""))
+                if old_role != new_role:
+                    if old_role:
+                        continue
+                elif len(existing.title) >= len(title):
+                    continue
             source = source_of(url) or ("appcast" if is_click_tracker(url) else "")
             found[key] = JobCandidate(
                 url=url,

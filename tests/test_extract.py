@@ -867,6 +867,45 @@ def test_bare_address_is_not_a_posting():
     assert extract_from_email(email) == []
 
 
+def test_ukg_click_wrapper_unwraps_to_ultipro_postings():
+    """UKG Pro job alerts wrap every posting in email.ukgjobalerts.com/c/<base64-zlib>.
+    Decoding must expose the real recruiting.ultipro.com OpportunityDetail URL, keep the
+    role title (not the requisition/department line), dedupe by opportunityId, and drop
+    the 'View Opportunities' board-search link."""
+    opp = (
+        "https://email.ukgjobalerts.com/c/eJxEj7uO2zAQAL-G6igslys-ChUxfAKSJoC7lMuXT4ksCjRl"
+        "IH8fOM21M9NMmm1yvtghz8o6D26aQA2fszWgdTQOQ8FQSrYGrOM86RAhBgzDOiOgAa8UgFKkxhJDLJr"
+        "TNCkb2E-C4Pxz_10Db7n15xjrY9jmz96Pp9DfBC4Cl5ZjO9e-7vfx3Pp6tPrOBC6Xj5sCpS4ft9svg"
+        "cuPGi6VWxK4WAbInrQ00bEkYi9DVllSLJwoITnwApefx1FbP_e1_73mzusm9FK_2Pck9JUYFKkM0pJ1"
+        "kqZopPOFZQoFPVntkYxA86xni1noa37wug1t3vmV8z4-atsYSBDc3-L_4GvGfwEAAP__qZNmBA"
+    )
+    board = (
+        "https://email.ukgjobalerts.com/c/eJwcjzFygzAQAF9zdDCnQ0KooAhjU6R0l_KQDlsxRo4Qfn_"
+        "G7ndndsNgQ-8WW8mgbO-wNwZVdRvEBrGLRWf6OZAO1noblF48mdBpNlUcCKlDpxSiUlo1i5_90nIwRt"
+        "mZnQGNx_36m2ZeJZe98elRrcOtlOcO7RfQBDRl8fmIJW7X5lhLfOb0xoCm8XxRqNR4vlx-gKbvNI-Jc"
+        "wCaLCOK023d-Z5rrdnVsyiptV846EC6Rwft9AftKXBhoHH3UTYvQN2ejuwF2pM8OK5A3S0GqT999Rq3"
+        "O7Snkg-p8rDxS2RrHimvjBo0Xt_G5-E10H8AAAD__5R4XhU"
+    )
+    assert unwrap_url(opp).startswith("https://recruiting.ultipro.com/")
+    assert "OpportunityDetail" in unwrap_url(opp)
+    assert is_job_url(opp)
+    assert not is_job_url(board)  # board search / "view opportunities" is not a posting
+
+    html = (
+        f'<h3><a href="{opp}">Sr. Automation QA Engineer</a></h3>'
+        f'<div><a href="{opp}">Information Services and Technology | Requisition Number 1</a></div>'
+        f'<p><a href="{board}">View Opportunities</a></p>'
+    )
+    email = ParsedEmail(
+        id="ukg", sender_name="Job Alerts", sender_email="no-reply@ukgjobalerts.com",
+        subject="Job opportunities for you", html=html,
+    )
+    jobs = extract_from_email(email, limit=25)
+    assert any(j.title == "Sr. Automation QA Engineer" for j in jobs)
+    assert all(j.source == "ultipro" and "ultipro.com" in j.url for j in jobs)
+    assert not any(j.title == "View Opportunities" for j in jobs)
+
+
 def test_malformed_url_does_not_crash_extraction():
     """A broken href (bad IPv6 brackets) must not abort extraction for the message."""
     html = """
