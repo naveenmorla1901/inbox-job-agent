@@ -1,5 +1,6 @@
 import base64
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -93,6 +94,59 @@ def test_mail_page_bundles_jobs_under_the_email(client):
     assert raw.status_code == 200
     assert b"Email text" in raw.content
     assert b"Extracted postings" in raw.content
+
+
+def test_mail_list_tagline_omits_repeated_category_icon(client):
+    test_client, engine = client
+    with Session(engine) as session:
+        session.add(
+            Message(
+                id="aldi1",
+                subject="Welcome to ALDI!",
+                category="next_step",
+                sender="ALDI Hiring",
+            )
+        )
+        session.commit()
+    page = test_client.get("/")
+    assert page.status_code == 200
+    body = page.text
+    assert "Welcome to ALDI!" in body
+    # Subject still carries the category mark; the list tagline is the label only.
+    assert 'class="ico"' in body
+    assert 'class="tag good">Next steps asked of you</span>' in body
+
+
+def test_mail_seven_day_window_lists_mail_past_the_old_cap(client):
+    test_client, engine = client
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session:
+        for index in range(160):
+            session.add(
+                Message(
+                    id=f"today{index}",
+                    subject=f"Today mail {index}",
+                    category="other",
+                    received_at=now - timedelta(minutes=index),
+                )
+            )
+        session.add(
+            Message(
+                id="older1",
+                subject="Wednesday recruiter ping",
+                category="recruiter_outreach",
+                received_at=now - timedelta(days=3),
+            )
+        )
+        session.commit()
+    one_day = test_client.get("/")
+    assert one_day.status_code == 200
+    assert b"Wednesday recruiter ping" not in one_day.content
+    week = test_client.get("/?days=7")
+    assert week.status_code == 200
+    assert b"Wednesday recruiter ping" in week.content
+    assert b"Today mail 159" in week.content
+    assert b"161 email" in week.content
 
 
 def test_issues_page_lists_recorded_failures(client):

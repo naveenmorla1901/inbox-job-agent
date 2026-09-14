@@ -68,7 +68,8 @@
     /* ---------- Layout ---------- */
     main { max-width: none; margin: 0 auto; padding: 8px 16px 28px; }
     main.wide { max-width: none; padding: 8px 12px 10px; height: calc(100vh - 46px);
-      display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+      max-height: calc(100vh - 46px); display: flex; flex-direction: column;
+      min-height: 0; overflow: hidden; }
     .page-head { display: flex; align-items: flex-end; justify-content: space-between;
       gap: 12px; margin-bottom: 8px; flex-wrap: wrap; flex-shrink: 0; }
     .page-head h1 { font-size: 18px; }
@@ -106,10 +107,13 @@
 
     /* ---------- Inbox workspace ---------- */
     .workspace { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
-      gap: 8px; flex: 1; min-height: 0; }
+      grid-template-rows: minmax(0, 1fr); gap: 8px; flex: 1 1 0; min-height: 0; overflow: hidden; }
     .pane { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-      box-shadow: var(--shadow); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-    .pane-scroll { overflow: auto; flex: 1; min-height: 0; }
+      box-shadow: var(--shadow); display: flex; flex-direction: column; min-height: 0;
+      height: 100%; max-height: 100%; overflow: hidden; }
+    .pane-scroll { overflow: auto; flex: 1 1 0; min-height: 0; overscroll-behavior: contain; }
+    #mail-list { padding-bottom: 28px; }
+    .mail-key { flex-shrink: 0; }
     .mail-row { display: block; padding: 7px 10px; border-bottom: 1px solid var(--line-2);
       color: inherit; cursor: pointer; }
     .mail-row:hover { background: var(--surface-2); text-decoration: none; }

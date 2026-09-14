@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import defer
 from sqlmodel import Session, col, func, select
 
 from .applications import (
@@ -258,9 +259,14 @@ def mail_bundle(
     category: str = "",
     q: str = "",
     has: str = "",
-) -> tuple[list[Message], dict[str, list[Job]], dict[str, Outreach]]:
+) -> tuple[list[Message], dict[str, int], dict[str, int], dict[str, Outreach]]:
     since = datetime.now(timezone.utc) - timedelta(days=max(1, days))
-    stmt = select(Message).where(Message.received_at >= since)
+    stmt = select(Message).where(Message.received_at >= since).options(
+        defer(Message.body_text),
+        defer(Message.extract_json),
+        defer(Message.summary),
+        defer(Message.snippet),
+    )
     if category:
         stmt = stmt.where(Message.category == category)
     if q:
@@ -286,17 +292,23 @@ def mail_bundle(
         stmt = stmt.where(col(Message.category).in_(FOLLOW_UP_KINDS))
     elif has == "other":
         stmt = stmt.where(Message.category == "other")
-    messages = session.exec(stmt.order_by(col(Message.received_at).desc()).limit(150)).all()
+    # The left pane lists every message in the window. A hard cap hid older days
+    # once a busy inbox filled the first page (often a single calendar day).
+    messages = session.exec(stmt.order_by(col(Message.received_at).desc())).all()
     ids = [message.id for message in messages]
-    jobs_by_mail: dict[str, list[Job]] = {}
+    job_counts: dict[str, int] = {}
+    matched_by_mail: dict[str, int] = {}
     outreach_by_mail: dict[str, Outreach] = {}
     if ids:
-        jobs = session.exec(select(Job).where(col(Job.message_id).in_(ids))).all()
-        for job in sorted(jobs, key=lambda row: (-(row.score or 0.0), row.id or 0)):
-            jobs_by_mail.setdefault(job.message_id, []).append(job)
+        for message_id, matched in session.exec(
+            select(Job.message_id, Job.matched).where(col(Job.message_id).in_(ids))
+        ):
+            job_counts[message_id] = job_counts.get(message_id, 0) + 1
+            if matched:
+                matched_by_mail[message_id] = matched_by_mail.get(message_id, 0) + 1
         for item in session.exec(select(Outreach).where(col(Outreach.message_id).in_(ids))).all():
             outreach_by_mail[item.message_id] = item
-    return messages, jobs_by_mail, outreach_by_mail
+    return messages, job_counts, matched_by_mail, outreach_by_mail
 
 
 def require_token(request: Request) -> None:
@@ -338,13 +350,9 @@ def mail_page(
     checked: str = "",
     flash: str = "",
 ):
-    messages, jobs_by_mail, outreach_by_mail = mail_bundle(
+    messages, job_counts, matched_by_mail, outreach_by_mail = mail_bundle(
         session, days=days, category=category, q=q, has=has
     )
-    matched_by_mail = {
-        message_id: sum(1 for job in rows if job.matched)
-        for message_id, rows in jobs_by_mail.items()
-    }
     selected = next((row for row in messages if row.id == m), None)
     if selected is None and messages:
         selected = messages[0]
@@ -363,7 +371,7 @@ def mail_page(
         1 for row in messages if row.category == JOB_ALERT and not row.jobs_found
     )
     unstored_extracts = sum(
-        1 for row in messages if row.jobs_found and not jobs_by_mail.get(row.id)
+        1 for row in messages if row.jobs_found and row.id not in job_counts
     )
 
     def mail_qs(**overrides) -> str:
@@ -379,7 +387,10 @@ def mail_page(
         clean = {key: value for key, value in params.items() if value not in (None, "")}
         return urlencode(clean)
 
-    selected_jobs = jobs_by_mail.get(selected.id, []) if selected else []
+    selected_jobs: list[Job] = []
+    if selected:
+        selected_jobs = session.exec(select(Job).where(Job.message_id == selected.id)).all()
+        selected_jobs.sort(key=lambda row: (-(row.score or 0.0), row.id or 0))
     raw_extract = parse_extract_payload(selected.extract_json) if selected else []
     if selected and not raw_extract:
         raw_extract = [
@@ -401,7 +412,7 @@ def mail_page(
         {
             "messages": messages,
             "day_groups": group_by_et_day(messages),
-            "jobs_by_mail": jobs_by_mail,
+            "job_counts": job_counts,
             "matched_by_mail": matched_by_mail,
             "outreach_by_mail": outreach_by_mail,
             "selected": selected,
@@ -420,7 +431,7 @@ def mail_page(
             "category_counts": category_counts,
             "empty_alerts": empty_alerts,
             "unstored_extracts": unstored_extracts,
-            "mail_jobs": sum(len(rows) for rows in jobs_by_mail.values()),
+            "mail_jobs": sum(job_counts.values()),
             "mail_matches": sum(matched_by_mail.values()),
             "mail_qs": mail_qs,
             "extract_miss": session.get(ExtractMiss, selected.id) if selected else None,

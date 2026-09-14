@@ -55,7 +55,7 @@
   {% endfor %}
   <span class="tag" title="j next email, k previous, o open in Gmail">j / k / o</span>
 </div>
-<div class="meta" style="margin:-4px 0 8px; gap:10px; flex-wrap:wrap">
+<div class="meta mail-key" style="margin:-4px 0 8px; gap:10px; flex-wrap:wrap">
   {% for key in category_order %}
   <span title="{{ category_labels.get(key, key) }}"><span class="ico" aria-hidden="true">{{ key|ico }}</span>{{ category_labels.get(key, key) }}</span>
   {% endfor %}
@@ -73,14 +73,14 @@
       {% for day, rows in day_groups %}
       <div class="day-head">{{ day }}</div>
       {% for message in rows %}
-      {% set jobs = jobs_by_mail.get(message.id, []) %}
+      {% set job_n = job_counts.get(message.id, 0) %}
       <a class="mail-row {% if selected and selected.id == message.id %}active{% endif %}" data-mail-row href="/?{{ mail_qs(m=message.id) }}">
         <h3><span class="ico" aria-hidden="true">{{ message.category|ico }}</span>{{ message.subject[:90] or "(no subject)" }}</h3>
         <div class="meta">
-          <span class="tag {% if message.category in ('interview_invite','offer','next_step','assessment','recruiter_outreach') %}good{% elif message.category == 'job_alert' %}accent{% elif message.category == 'rejection' %}bad{% endif %}">{{ message.category|marked }}</span>
+          <span class="tag {% if message.category in ('interview_invite','offer','next_step','assessment','recruiter_outreach') %}good{% elif message.category == 'job_alert' %}accent{% elif message.category == 'rejection' %}bad{% endif %}">{{ category_labels.get(message.category, message.category) }}</span>
           <span>{{ message.received_at | et("%I:%M %p") }}</span>
-          {% if jobs %}
-          <span class="tag {% if matched_by_mail.get(message.id, 0) %}good{% endif %}">{{ matched_by_mail.get(message.id, 0) }}/{{ jobs|length }}</span>
+          {% if job_n %}
+          <span class="tag {% if matched_by_mail.get(message.id, 0) %}good{% endif %}">{{ matched_by_mail.get(message.id, 0) }}/{{ job_n }}</span>
           {% endif %}
         </div>
         <div class="meta">{{ message.sender }}</div>
@@ -308,7 +308,8 @@
   const active = rows.findIndex((row) => row.classList.contains("active"));
   const gmail = {{ ("https://mail.google.com/mail/u/0/#inbox/" ~ selected.id if selected else "") | tojson }};
   const list = document.getElementById("mail-list");
-  const scrollKey = "mail-list-scroll";
+  const days = new URL(window.location.href).searchParams.get("days") || "1";
+  const scrollKey = "mail-list-scroll:" + days;
   if (list) {
     const saved = sessionStorage.getItem(scrollKey);
     if (saved) list.scrollTop = parseInt(saved, 10) || 0;
