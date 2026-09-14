@@ -206,6 +206,51 @@ def test_other_mail_gets_a_subtype():
     assert result.email_type == "newsletter"
 
 
+def test_posting_links_beat_marketing_boilerplate():
+    """Meta career blasts carry unsubscribe / opt-out boilerplate but still list real
+    postings. Once the extractor pulls links out, the mail is a job alert, not other."""
+    result = classify_rules(
+        email(
+            "noreply@recruiting.facebook.com",
+            "Meta Careers job alert: meta machine learning",
+            "There are new job openings. These new job openings match your alert criteria. "
+            "Machine Learning Engineer, Tel Aviv, Israel. To stop receiving this alert, "
+            "go to Career Profile and delete this alert. Unsubscribe. opt out here.",
+            name="Meta Careers",
+        ),
+        PROFILE,
+        job_count=2,
+    )
+    assert result.category == JOB_ALERT
+
+
+def test_posting_links_beat_generic_career_blast():
+    """Jobcase / Paycom style blasts land as 'other' by subject alone, but when the
+    extractor finds posting links they belong in the job-alert pipeline so the rows store."""
+    deloitte = classify_rules(
+        email(
+            "email@umail.jobcase.com",
+            "Naveen, Deloitte is interested in you",
+            "Deloitte has roles that match your interests.",
+            name="Jobcase",
+        ),
+        PROFILE,
+        job_count=6,
+    )
+    assert deloitte.category == JOB_ALERT
+    paycom = classify_rules(
+        email(
+            "systemmessage@paycomonline.com",
+            "Candidate New Job Alerts",
+            "New opportunities are available.",
+            name="Paycom",
+        ),
+        PROFILE,
+        job_count=1,
+    )
+    assert paycom.category == JOB_ALERT
+
+
 def test_workday_career_alerts_are_job_alerts():
     nelnet = classify_rules(
         email(
