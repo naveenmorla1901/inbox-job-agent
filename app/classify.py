@@ -42,7 +42,13 @@ ALERT_SUBJECT = re.compile(
     r"\d+\s+new\s+(job|opportunit)|jobs? matching|recommended for you|"
     r"your job alert|hiring now|new opportunities|still available|"
     r"you would be a great fit|career alerts?|potential roles|"
-    r"talent community|job match has arrived)",
+    r"talent community|job match has arrived|"
+    # Career-site blasts (Apple, Citi, Dalia, Blue Cross) that name roles but use
+    # subjects the list above missed, so the LLM digest-recovery pass never ran.
+    r"we.?ve matched|matched .{0,40}to your profile|"
+    r"(role|roles|opportunit(?:y|ies)) .{0,40}(match|for you)|"
+    r"looks like a (match|great fit)|job feed|"
+    r"job recommendations?|opportunit(?:y|ies) for you)",
     re.I,
 )
 INTERVIEW_RE = re.compile(

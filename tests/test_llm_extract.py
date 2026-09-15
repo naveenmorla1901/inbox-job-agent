@@ -191,6 +191,40 @@ def test_expected_count_is_passed_to_the_model(fresh_config):
     assert "about 4 job title(s)" in llm.prompts[0]
 
 
+def test_career_blast_subjects_open_the_digest_gate(fresh_config):
+    """Apple/Citi career blasts name roles in the body but use subjects the old
+    ALERT_SUBJECT list missed, so looks_like_digest() was False and the recovery pass
+    never ran. With the broadened subjects the gate opens and the titles in the text
+    become rows (link=null, since these emails carry no per-role link)."""
+    email = ParsedEmail(
+        id="apple",
+        sender_name="Apple Jobs",
+        sender_email="applejobs@email.apple.com",
+        subject="We've matched Apple roles to your profile.",
+        text=(
+            "Great news - the following roles posted on the Apple jobs site match.\n"
+            "LLM Machine Learning Engineer, Models and Agent Science, AIML\n"
+            "Senior Machine Learning Engineer, Natural Language Generation\n"
+            "Applied AI/ML Software Engineer\n"
+        ),
+        html="",
+    )
+    from app.extract_jobs import extract_from_email
+
+    assert looks_like_digest(email, len(extract_from_email(email)))
+    llm = FakeLLM(
+        {"postings": [
+            {"link": None, "title": "LLM Machine Learning Engineer, Models and Agent Science, AIML", "company": "Apple"},
+            {"link": None, "title": "Senior Machine Learning Engineer, Natural Language Generation", "company": "Apple"},
+            {"link": None, "title": "Applied AI/ML Software Engineer", "company": "Apple"},
+        ]}
+    )
+    jobs = extract_postings(email, llm, limit=40)
+    assert llm.calls >= 1
+    assert len(jobs) == 3
+    assert all(job.url == "" and job.url_key for job in jobs)
+
+
 def test_roles_named_without_a_link_still_become_rows(fresh_config):
     """Apple alerts list the roles as plain text; a posting may have no own link."""
     email = ParsedEmail(

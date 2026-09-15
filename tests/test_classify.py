@@ -206,6 +206,23 @@ def test_other_mail_gets_a_subtype():
     assert result.email_type == "newsletter"
 
 
+def test_career_blast_subjects_are_recognised_as_alerts():
+    """Apple/Citi/Dalia/Blue-Cross style subjects the old ALERT_SUBJECT list missed."""
+    for subject in (
+        "We've matched Apple roles to your profile.",
+        "Naveen, this role looks like a match for you!",
+        "Dalia job feed for Naveen",
+        "Blue Cross of Idaho Job Recommendations",
+        "Job opportunities for you",
+    ):
+        result = classify_rules(
+            email("careers@example.com", subject, "See the roles below."),
+            PROFILE,
+            job_count=1,
+        )
+        assert result.category == JOB_ALERT, subject
+
+
 def test_workday_career_alerts_are_job_alerts():
     nelnet = classify_rules(
         email(
