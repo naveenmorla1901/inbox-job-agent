@@ -16,7 +16,7 @@
     </div>
     <div class="rail-kpi">
       <span>Next extract</span>
-      <b style="font-size:12px">{{ nav_sync.next_at | et("%I:%M %p") }}</b>
+      <b style="font-size:12px">{% if nav_sync.frozen %}paused{% else %}{{ nav_sync.next_at | et("%I:%M %p") }}{% endif %}</b>
     </div>
     <div class="rail-kpi">
       <span>Last synced</span>
@@ -47,6 +47,21 @@
       <span>{% if nav_sync.cloud %}Cloud Run{% else %}Local loop{% endif %}</span>
       <b style="font-size:12px">{{ nav_sync.interval_min }}m</b>
     </div>
+    {% if nav_sync.frozen %}
+    <div class="rail-kpi warn">
+      <span>Extraction</span>
+      <b style="font-size:12px">frozen</b>
+    </div>
+    <form method="post" action="/activity/unfreeze" style="margin:0">
+      <input type="hidden" name="next" value="/activity">
+      <button type="submit" class="btn-primary">Resume</button>
+    </form>
+    {% else %}
+    <form method="post" action="/activity/freeze" style="margin:0">
+      <input type="hidden" name="next" value="/activity">
+      <button type="submit" class="btn-warn">Freeze extraction</button>
+    </form>
+    {% endif %}
     {% if nav_sync.extracting %}
     <div class="rail-kpi warn">
       <span>Extracting</span>
@@ -57,7 +72,7 @@
   </aside>
 
   <div class="stack">
-    <p class="lede" style="margin:0">A <b>Deploy</b> row is this revision starting to poll — not a failure. Mail from before poll start is skipped on purpose. Status <b>ok</b> there means the cursor was planted.</p>
+    <p class="lede" style="margin:0">A <b>Deploy</b> row is this revision starting to poll — not a failure. Mail from before poll start is skipped on purpose. Status <b>ok</b> there means the cursor was planted. <b>Freeze</b> pauses Gmail extraction and API calls; mail already processed stays on Mail. <b>Resume</b> continues the next time window from the stored cursor.</p>
     <div class="sheet-wrap">
       {% if not poll_runs %}
       <p class="lede" style="padding:12px">No windows recorded yet. First extract is {{ nav_sync.interval_min }} minutes after origin.</p>
@@ -90,7 +105,7 @@
           <td>{{ run.skipped }}</td>
           <td>{{ run.jobs_matched }}/{{ run.jobs_found }}</td>
           <td>
-            <span class="tag {% if run.status == 'error' %}bad{% else %}good{% endif %}">{{ run.status }}</span>
+            <span class="tag {% if run.status == 'error' %}bad{% elif run.status == 'frozen' %}warn{% else %}good{% endif %}">{{ run.status }}</span>
             {% if run.note %}<div class="meta">{{ run.note[:180] }}</div>{% endif %}
           </td>
         </tr>

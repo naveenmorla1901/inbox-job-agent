@@ -87,9 +87,34 @@ def session_scope() -> Iterator[Session]:
         yield session
 
 
+STATE_FROZEN = "poll_frozen"
+
+
 def get_state(session: Session, key: str, default: str = "") -> str:
     row = session.get(State, key)
     return row.value if row else default
+
+
+def is_poll_frozen(session: Session | None = None) -> bool:
+    """True when the user paused Gmail extraction and outbound API work."""
+    if session is not None:
+        return bool((get_state(session, STATE_FROZEN) or "").strip())
+    with session_scope() as owned:
+        return bool((get_state(owned, STATE_FROZEN) or "").strip())
+
+
+def freeze_poll(session: Session, when=None) -> str:
+    stamp = (when or utcnow()).isoformat()
+    set_state(session, STATE_FROZEN, stamp)
+    return stamp
+
+
+def unfreeze_poll(session: Session) -> None:
+    set_state(session, STATE_FROZEN, "")
+
+
+def load_freeze_at(session: Session) -> str:
+    return (get_state(session, STATE_FROZEN) or "").strip()
 
 
 def set_state(session: Session, key: str, value: str) -> None:

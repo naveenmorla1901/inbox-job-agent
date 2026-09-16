@@ -238,6 +238,11 @@ class LLM:
         return bool(self.chain(CLASSIFY) or self.chain(EXTRACT))
 
     def complete(self, prompt: str, system: str = "", task: str = CLASSIFY, timeout: int = 45) -> str:
+        from .db import is_poll_frozen
+
+        if is_poll_frozen():
+            log.info("LLM %s skipped: extraction is frozen", task)
+            return ""
         chain = self.chain(task)
         attempts: list[str] = []
         for provider, model in chain:

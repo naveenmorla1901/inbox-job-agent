@@ -492,3 +492,64 @@ def test_demote_hides_ack_and_login_followups(session):
     code = session.exec(select(Outreach).where(Outreach.message_id == "code1")).first()
     assert ack.handled and ack.kind == "application_update"
     assert code.handled and code.kind == "other"
+
+
+def test_frozen_poll_does_not_touch_gmail(session, monkeypatch):
+    pipeline.freeze_extraction(session)
+    session.commit()
+    called: list[str] = []
+
+    class FakeGmail:
+        def __init__(self, settings):
+            called.append("init")
+
+        def list_message_ids(self, *_a, **_k):
+            called.append("list")
+            return []
+
+    monkeypatch.setattr(pipeline, "GmailClient", FakeGmail)
+    stats = pipeline.poll_since_cursor(trigger="api")
+    assert stats.frozen
+    assert called == []
+    pipeline.unfreeze_extraction(session)
+    session.commit()
+    assert not pipeline.extraction_frozen(session)
+    stats = pipeline.run_once(after_epoch=1, before_epoch=2, trigger="api")
+    assert not stats.frozen
+    assert "init" in called
+
+
+def test_run_once_stops_mid_window_and_keeps_the_cursor(session, monkeypatch):
+    pipeline.set_state(session, pipeline.STATE_CURSOR, "1000")
+    session.commit()
+    seen: list[str] = []
+
+    class FakeGmail:
+        def __init__(self, settings):
+            pass
+
+        def list_message_ids(self, *_a, **_k):
+            return ["miss-1", "miss-2"]
+
+        def get_message(self, message_id):
+            return _gmail_payload_with_two_roles() | {"id": message_id}
+
+    orig = pipeline.process_email
+
+    def once_then_freeze(sess, email, llm):
+        seen.append(email.id)
+        outcome = orig(sess, email, llm)
+        pipeline.freeze_extraction(sess)
+        sess.commit()
+        return outcome
+
+    monkeypatch.setattr(pipeline, "GmailClient", FakeGmail)
+    monkeypatch.setattr(pipeline, "process_email", once_then_freeze)
+    stats = pipeline.run_once(after_epoch=1000, before_epoch=2000, trigger="api")
+    assert stats.frozen
+    assert seen == ["miss-1"]
+    session.expire_all()
+    assert pipeline.get_state(session, pipeline.STATE_CURSOR) == "1000"
+    assert session.get(Message, "miss-1") is not None
+    assert session.get(Message, "miss-2") is None
+

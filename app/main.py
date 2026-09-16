@@ -24,7 +24,7 @@ from .applications import (
 )
 from .classify import FOLLOW_UP_KINDS, JOB_ALERT, NOREPLY_RE
 from .config import ROOT, get_profile, get_settings
-from .db import get_engine, init_db
+from .db import get_engine, init_db, load_freeze_at
 from .gmail_client import gmail_token_status, host_setup, parse_gmail_push
 from .issues import issue_counts, latest_by_source, recent_issues
 from .marks import marked as mark_label
@@ -37,6 +37,8 @@ from .pipeline import (
     demote_noise_followups,
     email_for_reextract,
     ensure_poll_origin,
+    extraction_frozen,
+    freeze_extraction,
     load_last_run,
     load_poll_origin,
     load_poll_progress,
@@ -51,6 +53,7 @@ from .pipeline import (
     rescrape_job,
     run_once,
     start_gmail_watch,
+    unfreeze_extraction,
 )
 from .probe import probe_apis
 from .reporting import (
@@ -133,6 +136,9 @@ def _template_nav(_request: Request) -> dict:
     open_errors = 0
     open_flags = 0
     open_misses = 0
+    mail_count = 0
+    frozen = False
+    frozen_at = ""
     interval = max(60, settings.poll_interval_seconds)
     now = datetime.now(timezone.utc)
     try:
@@ -141,6 +147,9 @@ def _template_nav(_request: Request) -> dict:
             progress = load_poll_progress(session)
             pending = pending_outreach_count(session)
             origin = load_poll_origin(session)
+            frozen = extraction_frozen(session)
+            frozen_at = load_freeze_at(session)
+            mail_count = session.exec(select(func.count()).select_from(Message)).one()
             open_errors = issue_counts(session, hours=24).get("error", 0)
             open_flags = session.exec(
                 select(func.count())
@@ -155,7 +164,7 @@ def _template_nav(_request: Request) -> dict:
     else:
         next_end = int(now.timestamp()) + interval
     next_at = datetime.fromtimestamp(next_end, tz=timezone.utc)
-    extracting = progress.get("status") == "running"
+    extracting = (not frozen) and progress.get("status") == "running"
     return {
         "nav_pending": pending,
         "nav_errors": open_errors,
@@ -169,6 +178,9 @@ def _template_nav(_request: Request) -> dict:
             "origin": origin,
             "progress": progress,
             "extracting": extracting,
+            "frozen": frozen,
+            "frozen_at": frozen_at,
+            "mail_count": int(mail_count or 0),
             "cloud": bool(os.environ.get("K_SERVICE")),
         },
     }
@@ -251,6 +263,15 @@ def safe_next(value: str, fallback: str = "/") -> str:
     if value.startswith("/") and not value.startswith("//"):
         return value
     return fallback
+
+
+def frozen_redirect(dest: str) -> RedirectResponse:
+    dest = safe_next(dest, "/")
+    sep = "&" if "?" in dest else "?"
+    return RedirectResponse(
+        f"{dest}{sep}{urlencode({'flash': 'Extraction is frozen. Resume to continue Gmail and API work.'})}",
+        status_code=303,
+    )
 
 
 def mail_bundle(
@@ -676,11 +697,11 @@ def activity_page(
     session: Session = Depends(db_session),
     fresh: str = "",
     checked: str = "",
+    flash: str = "",
 ):
-    flash = ""
     if fresh:
         flash = "Saved jobs and mail history were cleared. Only new emails will be analyzed."
-    elif checked:
+    elif checked and not flash:
         last = load_last_run(session)
         flash = (
             f"Checked {last.get('fetched', 0)} email(s). "
@@ -819,6 +840,8 @@ def activity_check(
 ):
     require_token(request)
     dest = safe_next(next, "/")
+    if extraction_frozen(session):
+        return frozen_redirect(dest)
     try:
         run_once()
     except Exception as exc:
@@ -853,6 +876,40 @@ def activity_watch(request: Request, session: Session = Depends(db_session)):
             status_code=400,
         )
     return RedirectResponse("/activity?on=1", status_code=303)
+
+
+@app.post("/activity/freeze")
+def activity_freeze(
+    request: Request,
+    session: Session = Depends(db_session),
+    next: str = Form("/"),
+):
+    require_token(request)
+    freeze_extraction(session)
+    session.commit()
+    dest = safe_next(next, "/activity")
+    sep = "&" if "?" in dest else "?"
+    return RedirectResponse(
+        f"{dest}{sep}{urlencode({'flash': 'Frozen. Gmail extraction and API calls are paused. Mail already processed stays here.'})}",
+        status_code=303,
+    )
+
+
+@app.post("/activity/unfreeze")
+def activity_unfreeze(
+    request: Request,
+    session: Session = Depends(db_session),
+    next: str = Form("/"),
+):
+    require_token(request)
+    unfreeze_extraction(session)
+    session.commit()
+    dest = safe_next(next, "/activity")
+    sep = "&" if "?" in dest else "?"
+    return RedirectResponse(
+        f"{dest}{sep}{urlencode({'flash': 'Resumed. Extraction continues on the next configured time window.'})}",
+        status_code=303,
+    )
 
 
 @app.get("/api/breakdown")
@@ -958,6 +1015,9 @@ def reextract_mail(
     row = session.get(Message, message_id)
     if not row:
         raise HTTPException(404, "message not found")
+    dest = safe_next(redirect, f"/?m={message_id}&days=30")
+    if extraction_frozen(session):
+        return frozen_redirect(dest)
     from .llm import LLM
 
     outcome = reextract_email(session, email_for_reextract(row), LLM())
@@ -1059,6 +1119,9 @@ def rescrape_job_page(
     redirect: str = Form(""),
 ):
     require_token(request)
+    dest = safe_next(redirect or f"/job/{job_id}", f"/job/{job_id}")
+    if extraction_frozen(session):
+        return frozen_redirect(dest)
     from .llm import LLM
 
     job = rescrape_job(session, job_id, LLM())
@@ -1378,6 +1441,13 @@ async def api_gmail_push(request: Request) -> dict:
     except Exception:
         body = {}
     parse_gmail_push(body)
+    with Session(get_engine()) as session:
+        if extraction_frozen(session):
+            return {
+                "frozen": True,
+                "skipped": True,
+                "note": "Frozen: Gmail extraction and API calls are paused.",
+            }
     try:
         maybe_renew_watch()
     except Exception:

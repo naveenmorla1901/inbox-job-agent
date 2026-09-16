@@ -58,7 +58,9 @@ def test_status_page_shows_auto_sync_and_no_manual_buttons(client):
     assert b"Poll interval" in body
     assert b"min" in body
     assert b"Poll start" in body
-    # The manual controls were removed in favour of automatic syncing.
+    # The freeze/resume controls pause automatic Gmail extraction; they are not
+    # the old one-shot "Check now" / "Start fresh" buttons.
+    assert b"Freeze" in body
     assert b"Check now" not in body
     assert b"Start fresh" not in body
     assert b"extra GitHub copy" not in body
@@ -571,3 +573,46 @@ def test_overview_puts_category_table_in_a_grid(client):
     assert response.status_code == 200
     assert b"dash-grid" in response.content
     assert b"<h1>Overview</h1>" not in response.content
+
+
+def test_freeze_keeps_mail_and_stops_gmail_until_resume(client, monkeypatch):
+    test_client, engine = client
+    with Session(engine) as session:
+        process_email(session, alert_email(), LLM())
+        session.commit()
+
+    freeze = test_client.post("/activity/freeze", data={"next": "/"}, follow_redirects=False)
+    assert freeze.status_code == 303
+    mail = test_client.get("/?days=30")
+    assert mail.status_code == 200
+    assert b"Frozen" in mail.content
+    assert b"Resume" in mail.content
+    assert b"jobs match" in mail.content.lower() or b"Data Scientist" in mail.content
+
+    called: list[str] = []
+
+    class Boom:
+        def __init__(self, settings):
+            called.append("gmail")
+
+    monkeypatch.setattr("app.pipeline.GmailClient", Boom)
+    run = test_client.post("/api/run")
+    assert run.status_code == 200
+    payload = run.json()
+    assert payload.get("frozen") is True
+    assert called == []
+
+    blocked = test_client.post(
+        "/mail/m1/reextract", data={"redirect": "/?days=30"}, follow_redirects=False
+    )
+    assert blocked.status_code == 303
+    location = blocked.headers.get("location") or ""
+    assert "frozen" in location.lower() or "flash=" in location
+
+    resume = test_client.post("/activity/unfreeze", data={"next": "/"}, follow_redirects=False)
+    assert resume.status_code == 303
+    again = test_client.get("/")
+    assert again.status_code == 200
+    assert b"Frozen" not in again.content
+    assert b"Freeze" in again.content
+

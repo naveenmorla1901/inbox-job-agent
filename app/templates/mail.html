@@ -64,7 +64,7 @@
 {% if not messages %}
 <div class="empty">
   <div class="big">No mail in this window</div>
-  Auto-sync starts at boot, skips older mail, and extracts every {{ nav_sync.interval_min }} minutes from that moment.
+  Auto-sync starts at boot, skips older mail, and extracts every {{ nav_sync.interval_min }} minutes from that moment.{% if nav_sync.frozen %} <b>Frozen</b> — Gmail and API work are paused; mail already processed stays on this page.{% endif %}
 </div>
 {% else %}
 <div class="workspace">

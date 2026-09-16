@@ -832,6 +832,13 @@ def fetch_all(
 ) -> dict[str, ScrapedJob]:
     if not candidates:
         return {}
+    from .db import is_poll_frozen
+
+    if is_poll_frozen():
+        return {
+            c.url_key: ScrapedJob(status="skipped", extraction="frozen")
+            for c in candidates
+        }
     # A posting named in the email with no link of its own has nothing to fetch.
     linkless = {
         c.url_key: ScrapedJob(status="skipped", extraction="email")

@@ -23,7 +23,16 @@ from .classify import (
     is_login_or_security,
 )
 from .config import get_profile, get_settings
-from .db import exists, get_state, init_db, session_scope, set_state
+from .db import (
+    exists,
+    freeze_poll as _store_freeze,
+    get_state,
+    init_db,
+    is_poll_frozen,
+    session_scope,
+    set_state,
+    unfreeze_poll as _store_unfreeze,
+)
 from .email_parse import Link, ParsedEmail, parse_message
 from .extract_jobs import JobCandidate, extract_from_email
 from .llm_extract import extract_postings
@@ -71,6 +80,8 @@ class RunStats:
     window_start: int = 0
     window_end: int = 0
     trigger: str = ""
+    frozen: bool = False
+    note: str = ""
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -179,6 +190,30 @@ def load_poll_progress(session: Session) -> dict:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def freeze_extraction(session: Session) -> dict:
+    """Stop Gmail polling, LLM, and scrape calls. Mail already stored stays visible."""
+    at = _store_freeze(session)
+    progress = load_poll_progress(session)
+    if progress.get("status") == "running":
+        set_poll_progress(session, **{**progress, "status": "frozen"})
+    log.info("extraction frozen at %s", at)
+    return {"frozen": True, "at": at}
+
+
+def unfreeze_extraction(session: Session) -> dict:
+    """Resume the configured extract windows from the stored cursor."""
+    _store_unfreeze(session)
+    progress = load_poll_progress(session)
+    if progress.get("status") == "frozen":
+        set_poll_progress(session, **{**progress, "status": "idle"})
+    log.info("extraction resumed")
+    return {"frozen": False}
+
+
+def extraction_frozen(session: Session | None = None) -> bool:
+    return is_poll_frozen(session)
 
 
 def parse_extract_payload(raw: str) -> list[dict]:
@@ -461,7 +496,7 @@ def remember_run(session: Session, stats: RunStats) -> None:
             started_at=started,
             finished_at=datetime.now(timezone.utc),
             trigger=stats.trigger or "poll",
-            status="error" if stats.errors else "ok",
+            status="error" if stats.errors else ("frozen" if stats.frozen else "ok"),
             window_start=stats.window_start,
             window_end=stats.window_end,
             fetched=stats.fetched,
@@ -470,7 +505,7 @@ def remember_run(session: Session, stats: RunStats) -> None:
             jobs_found=stats.jobs_found,
             jobs_matched=stats.jobs_matched,
             error_count=len(stats.errors),
-            note="\n".join(stats.errors[:8]),
+            note=stats.note or "\n".join(stats.errors[:8]),
         )
     )
 
@@ -1064,6 +1099,8 @@ def apply_page_to_job(
 
 def rescrape_job(session: Session, job_id: int, llm: LLM | None = None) -> Job | None:
     """Fetch one stored posting again and rematch it against the profile."""
+    if is_poll_frozen(session):
+        return session.get(Job, job_id)
     job = session.get(Job, job_id)
     if job is None:
         return None
@@ -1108,6 +1145,12 @@ def run_once(
     )
     settings = get_settings()
     init_db()
+    with session_scope() as session:
+        if is_poll_frozen(session):
+            stats.frozen = True
+            stats.note = "Frozen: Gmail extraction and API calls are paused."
+            stats.duration_s = round(time.time() - started, 2)
+            return stats
 
     llm = LLM(settings)
     notifier = Notifier(settings)
@@ -1168,6 +1211,11 @@ def run_once(
         session.commit()
 
         for step, message_id in enumerate(message_ids, start=1):
+            if is_poll_frozen(session):
+                stats.frozen = True
+                stats.note = f"Frozen after {stats.processed} new email(s) of {len(message_ids)}."
+                log.info("extraction froze mid-run: %s", stats.note)
+                break
             already = session.get(Message, message_id)
             if already and not reclassify and not reextract:
                 stats.skipped += 1
@@ -1231,23 +1279,25 @@ def run_once(
                     {"id": message_id, "subject": "", "sender": "", "category": "", "jobs_found": 0, "jobs_matched": 0, "error": str(exc)}
                 )
 
-        for item in pending_notifications:
-            if notifier.outreach(item):
-                item.notified = True
-                session.add(item)
+        if not stats.frozen:
+            for item in pending_notifications:
+                if notifier.outreach(item):
+                    item.notified = True
+                    session.add(item)
+                    stats.notified += 1
+
+            if new_jobs and settings.notify_on_jobs and notifier.jobs(new_jobs):
                 stats.notified += 1
 
-        if new_jobs and settings.notify_on_jobs and notifier.jobs(new_jobs):
-            stats.notified += 1
-
-        if before_epoch:
-            set_state(session, STATE_CURSOR, str(int(before_epoch)))
-        elif latest_epoch:
-            set_state(session, STATE_CURSOR, str(latest_epoch))
+        if not stats.frozen:
+            if before_epoch:
+                set_state(session, STATE_CURSOR, str(int(before_epoch)))
+            elif latest_epoch:
+                set_state(session, STATE_CURSOR, str(latest_epoch))
         set_poll_progress(
             session,
-            status="idle",
-            index=len(message_ids),
+            status="frozen" if stats.frozen else "idle",
+            index=stats.processed + stats.skipped,
             total=len(message_ids),
             subject="",
             window_start=after_epoch or 0,
@@ -1257,11 +1307,12 @@ def run_once(
         remember_run(session, stats)
         session.commit()
 
-    try:
-        maybe_renew_watch()
-    except Exception as exc:
-        log.exception("gmail watch renew failed")
-        record_issue("gmail", "Gmail watch renew failed", str(exc), severity="warn")
+    if not stats.frozen:
+        try:
+            maybe_renew_watch()
+        except Exception as exc:
+            log.exception("gmail watch renew failed")
+            record_issue("gmail", "Gmail watch renew failed", str(exc), severity="warn")
     log.info("run complete: %s", {k: v for k, v in stats.as_dict().items() if k != "emails"})
     return stats
 
@@ -1270,6 +1321,16 @@ def poll_since_cursor(max_messages: int | None = None, trigger: str = "api") -> 
     """Extract mail from the stored cursor up to now. Used by Cloud Scheduler."""
     init_db()
     with session_scope() as session:
+        if is_poll_frozen(session):
+            cursor = _int_state(session, STATE_CURSOR, 0)
+            return RunStats(
+                started_at=datetime.now(timezone.utc).isoformat(),
+                window_start=cursor,
+                window_end=int(time.time()),
+                trigger=trigger,
+                frozen=True,
+                note="Frozen: Gmail extraction and API calls are paused.",
+            )
         info = ensure_poll_origin(session)
         session.commit()
         cursor = int(info["cursor"])
@@ -1311,6 +1372,11 @@ def interval_poll_loop(max_messages: int | None = None, interval_s: int | None =
         fmt_et(datetime.fromtimestamp(origin + interval, tz=timezone.utc), "%I:%M %p ET"),
     )
     while True:
+        with session_scope() as session:
+            frozen = is_poll_frozen(session)
+        if frozen:
+            time.sleep(5)
+            continue
         end = origin + tick * interval
         delay = end - time.time()
         if delay > 0:
@@ -1319,7 +1385,16 @@ def interval_poll_loop(max_messages: int | None = None, interval_s: int | None =
                 delay,
                 fmt_et(datetime.fromtimestamp(end, tz=timezone.utc), "%I:%M %p ET"),
             )
-            time.sleep(delay)
+            while delay > 0:
+                with session_scope() as session:
+                    if is_poll_frozen(session):
+                        break
+                chunk = min(5.0, delay)
+                time.sleep(chunk)
+                delay = end - time.time()
+            with session_scope() as session:
+                if is_poll_frozen(session):
+                    continue
         start, stop = tick_window(end, origin, interval)
         try:
             stats = run_once(
@@ -1329,6 +1404,8 @@ def interval_poll_loop(max_messages: int | None = None, interval_s: int | None =
                 trigger="loop",
             )
             log.info("auto-sync: %s", {k: v for k, v in stats.as_dict().items() if k != "emails"})
+            if stats.frozen:
+                continue
         except Exception as exc:
             log.exception("auto-sync failed; will retry next window")
             record_issue("poll", "Auto-sync window failed", str(exc))

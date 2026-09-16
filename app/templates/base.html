@@ -101,6 +101,9 @@
     .btn-ghost { background: var(--surface); }
     .btn-sm { padding: 5px 9px; font-size: 12.5px; border-radius: 8px; }
     .btn-danger { color: var(--bad); border-color: var(--bad-line); background: var(--bad-soft); }
+    .btn-warn { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
+    .sync form { display: inline; margin: 0; }
+    .sync .freeze-btn { padding: 3px 9px; font-size: 12px; font-weight: 650; }
     .toolbar .grow { flex: 1; min-width: 140px; }
     .toolbar .actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
     .result-count { color: var(--muted); font-size: 12.5px; margin: 0 0 6px; }
@@ -307,16 +310,30 @@
       </a>
     </nav>
     {% if request.url.path != '/login' %}
-    <span class="sync" title="{{ nav_sync.interval_min }}-minute windows from boot/deploy. Mail before origin is skipped.">
-      <span class="dot {% if nav_sync.extracting %}{% elif not nav_sync.auto %}off{% endif %}"{% if nav_sync.extracting %} style="background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)"{% endif %}></span>
-      {% if nav_sync.extracting %}
+    <span class="sync" title="{% if nav_sync.frozen %}Extraction is frozen. Mail already processed stays visible.{% else %}{{ nav_sync.interval_min }}-minute windows from boot/deploy. Mail before origin is skipped.{% endif %}">
+      <span class="dot {% if nav_sync.frozen or nav_sync.extracting %}{% elif not nav_sync.auto %}off{% endif %}"{% if nav_sync.frozen %} style="background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)"{% elif nav_sync.extracting %} style="background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)"{% endif %}></span>
+      {% if nav_sync.frozen %}
+        Frozen · {{ nav_sync.mail_count }} email{{ "s" if nav_sync.mail_count != 1 else "" }} kept
+        <form method="post" action="/activity/unfreeze">
+          <input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+          <button class="btn-sm btn-primary freeze-btn" type="submit">Resume</button>
+        </form>
+      {% elif nav_sync.extracting %}
         Extracting {{ nav_sync.progress.index }}/{{ nav_sync.progress.total }}
         {% if nav_sync.progress.subject %}· {{ nav_sync.progress.subject[:42] }}{% endif %}
+        <form method="post" action="/activity/freeze">
+          <input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+          <button class="btn-sm btn-warn freeze-btn" type="submit">Freeze</button>
+        </form>
       {% else %}
         Auto-sync · next <b>{{ nav_sync.next_at | et("%I:%M %p") }}</b>
         {% if nav_sync.last_run and nav_sync.last_run.started_at %}
           · last {{ nav_sync.last_run.started_at | ago }}
         {% endif %}
+        <form method="post" action="/activity/freeze">
+          <input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+          <button class="btn-sm btn-warn freeze-btn" type="submit">Freeze</button>
+        </form>
       {% endif %}
     </span>
     {% endif %}
