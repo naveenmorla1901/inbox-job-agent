@@ -234,15 +234,19 @@ def classify_rules(email: ParsedEmail, profile: Profile, job_count: int = 0) -> 
         return Classification(APPLICATION_UPDATE, 0.8, "application acknowledgement")
     if _looks_like_job_board(email, profile) and job_count >= 2:
         return Classification(JOB_ALERT, 0.9, "job board sender + posting links")
-    if job_count >= 3 and automated:
-        return Classification(JOB_ALERT, 0.8, f"{job_count} posting links in automated mail")
+    # Real posting links were pulled out of this mail, so it is a job-alert digest even
+    # when the body also carries marketing / unsubscribe / "recruiting team" boilerplate
+    # that would otherwise divert it to other or recruiter. Career blasts from Meta
+    # (recruiting.facebook.com), Jobcase and Paycom were losing every posting this way.
+    if job_count >= 2:
+        return Classification(JOB_ALERT, 0.85, f"{job_count} posting links extracted")
+    if job_count >= 1 and ALERT_SUBJECT.search(subject):
+        return Classification(JOB_ALERT, 0.75, "alert subject with posting link")
     if RECRUITER_RE.search(blob):
         confidence = 0.6 if automated else 0.85
         return Classification(RECRUITER, confidence, "recruiter outreach language")
     if MARKETING_RE.search(blob):
         return Classification(OTHER, 0.7, "marketing/transactional")
-    if job_count >= 1 and ALERT_SUBJECT.search(subject):
-        return Classification(JOB_ALERT, 0.6, "alert subject with posting link")
     return Classification(OTHER, 0.3, "no rule matched")
 
 
