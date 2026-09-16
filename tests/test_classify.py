@@ -211,6 +211,7 @@ def test_career_blast_subjects_are_recognised_as_alerts():
     for subject in (
         "We've matched Apple roles to your profile.",
         "Naveen, this role looks like a match for you!",
+        "Naveen, this job is a match!",
         "Dalia job feed for Naveen",
         "Blue Cross of Idaho Job Recommendations",
         "Job opportunities for you",

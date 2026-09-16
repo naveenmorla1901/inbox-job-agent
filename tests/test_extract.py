@@ -906,6 +906,86 @@ def test_ukg_click_wrapper_unwraps_to_ultipro_postings():
     assert not any(j.title == "View Opportunities" for j in jobs)
 
 
+def test_apple_jobsite_details_urls_are_postings():
+    """Apple career blasts link each role to jobs.apple.com/en-us/details/<id>-<loc>.
+    Location suffixes on the same requisition must collapse to one row."""
+    a = "https://jobs.apple.com/en-us/details/200672423-3337"
+    b = "https://jobs.apple.com/en-us/details/200672423-0836"
+    c = "https://jobs.apple.com/en-us/details/200683336-3337"
+    assert is_job_url(a) and source_of(a) == "apple"
+    assert canonical_key(a) == canonical_key(b) == "apple:200672423"
+    assert canonical_key(c) == "apple:200683336"
+    html = f"""
+    <a href="{a}">LLM Machine Learning Engineer, Models and Agent Science, AIML</a>
+    <a href="{b}">LLM Machine Learning Engineer, Models and Agent Science, AIML</a>
+    <a href="{c}">Senior Machine Learning Engineer, Natural Language Generation</a>
+    <a href="https://www.apple.com/jobs/us/">Apple jobs site</a>
+    """
+    email = ParsedEmail(
+        id="apple", sender_name="Apple Jobs", sender_email="applejobs@email.apple.com",
+        subject="We've matched Apple roles to your profile.", html=html,
+    )
+    jobs = extract_from_email(email)
+    assert {j.title for j in jobs} == {
+        "LLM Machine Learning Engineer, Models and Agent Science, AIML",
+        "Senior Machine Learning Engineer, Natural Language Generation",
+    }
+    assert all(j.source == "apple" for j in jobs)
+
+
+def test_eightfold_vsimp_apply_now_unwraps_pid():
+    """Ford/Citi/BMS 'this job is a match' mail wraps the posting in /vsimp?d=&n=
+    where n= is the careers URL with pid=. Footer 'view relevant jobs' has no pid."""
+    apply = (
+        "https://ford.eightfold.ai/vsimp?d=opaque"
+        "&n=https%3A%2F%2Fford.eightfold.ai%2Fcareers%3Fpid%3D563568453762848"
+        "%26utm_source%3Dposition_notification"
+    )
+    footer = "https://ford.eightfold.ai/vsimp?d=opaque&n=https%3A%2F%2Fford.eightfold.ai%2Fcareers"
+    assert unwrap_url(apply).startswith("https://ford.eightfold.ai/careers?pid=563568453762848")
+    assert is_job_url(apply)
+    assert not is_job_url(footer)
+    html = f"""
+    <p style="font-weight:600">AI & Analytics Implementation Specialist</p>
+    <p>Dearborn, MI, United States</p>
+    <a href="{apply}">Apply Now</a>
+    <a href="{footer}">View relevant jobs for you</a>
+    """
+    email = ParsedEmail(
+        id="ford", sender_name="Ford Motor Careers", sender_email="careers@careers.ford.com",
+        subject="Naveen, this job is a match!", html=html,
+    )
+    jobs = extract_from_email(email)
+    assert len(jobs) == 1
+    assert jobs[0].title == "AI & Analytics Implementation Specialist"
+    assert jobs[0].source == "eightfold"
+    assert "pid=563568453762848" in jobs[0].url
+    assert "Dearborn" in (jobs[0].location or "")
+
+
+def test_eightfold_vsimp_to_company_career_host_keeps_pid():
+    """BMS wraps Apply Now through eightfold but n= lands on jobs.bms.com?pid=."""
+    apply = (
+        "https://bms.eightfold.ai/vsimp?d=opaque"
+        "&n=https%3A%2F%2Fjobs.bms.com%2Fcareers%3Fpid%3D137483324396"
+    )
+    assert is_job_url(apply)
+    assert canonical_key(apply) == "pid:jobs.bms.com:137483324396"
+    html = f"""
+    <p>Manager, Analytical Engineer</p>
+    <p>New Brunswick - NJ - US</p>
+    <a href="{apply}">Apply Now</a>
+    """
+    email = ParsedEmail(
+        id="bms", sender_name="Bristol Myers Squibb", sender_email="noreply@bms.com",
+        subject="Naveen, this job is a match!", html=html,
+    )
+    jobs = extract_from_email(email)
+    assert len(jobs) == 1
+    assert jobs[0].title == "Manager, Analytical Engineer"
+    assert "pid=137483324396" in jobs[0].url
+
+
 def test_malformed_url_does_not_crash_extraction():
     """A broken href (bad IPv6 brackets) must not abort extraction for the message."""
     html = """

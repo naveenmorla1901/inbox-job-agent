@@ -64,6 +64,7 @@ JOB_HOSTS = {
     "twine.net": "twine",
     "zoom.us": "zoom",
     "ultipro.com": "ultipro",
+    "jobs.apple.com": "apple",
 }
 
 # URL paths that look like a single posting rather than a search page.
@@ -109,7 +110,8 @@ ID_PARAMS = (
 WEAK_ID_PARAMS = ("id",)
 
 FOOTER_TEXT = re.compile(
-    r"^(unsubscribe|privacy policy|view all jobs|see more jobs|update your preferences|"
+    r"^(unsubscribe|privacy policy|view all jobs|see more jobs|view relevant jobs|"
+    r"update your preferences|"
     r"update your profile|browse all|post a job|get more recommendations|we want to know|"
     r"adjust your job alert notifications?|this is a bad match)$",
     re.I,
@@ -131,6 +133,7 @@ CLICK_HOST_HINT = (
     "api.clinchtalent.com",
     "ukgjobalerts.com",
     "daliajobs.com",
+    "arc.dev",
 )
 
 LOCATION_HINT = re.compile(
@@ -178,7 +181,8 @@ JUNK_TITLE = re.compile(
     r"^job alert:|.+ jobs$|has not been updated|minimum base pay|job listings|"
     r"improve your alerts|telling us what you.re looking for|"
     r"email preferences|^preferences$|^\d{4}\s+\S+,?\s+inc|"
-    r"gift \d+ free|^share now$|^learn why|^help$|^terms and|^conditions:)",
+    r"gift \d+ free|^share now$|^learn why|^help$|^terms and|^conditions:|"
+    r"^edit$|job matches for)",
     re.I,
 )
 APPLY_CTA = re.compile(
@@ -233,6 +237,11 @@ def unwrap_url(url: str, depth: int = 4) -> str:
         ukg = _ukg_click_dest(url)
         if ukg and ukg != url:
             url = ukg
+            continue
+
+        eightfold = _eightfold_vsimp_dest(url)
+        if eightfold and eightfold != url:
+            url = eightfold
             continue
 
         parsed = _urlparse(url)
@@ -298,6 +307,17 @@ def _ukg_click_dest(url: str) -> str:
     return dest if dest.lower().startswith("http") else ""
 
 
+def _eightfold_vsimp_dest(url: str) -> str:
+    """Eightfold 'Apply Now' wrappers: /vsimp?d=<opaque>&n=<real careers URL with pid>."""
+    if not host_of(url).endswith("eightfold.ai"):
+        return ""
+    path = (_urlparse(url).path or "").lower()
+    if "/vsimp" not in path:
+        return ""
+    dest = unquote(parse_qs(_urlparse(url).query or "").get("n", [""])[0])
+    return dest if dest.lower().startswith("http") else ""
+
+
 def _encoded_redirect_dest(url: str) -> str:
     """SES L0 and Twine CL0 wraps: .../L0/https:%2F%2Fhost%2Fpath/1/<id>."""
     lower = url.lower()
@@ -343,6 +363,7 @@ def is_footer_link(text: str, url: str) -> bool:
             "privacy.htm",
             "update your preferences",
             "view all jobs",
+            "view relevant jobs",
             "/interview/index",
             "community/bowl",
             "job-preferences",
@@ -383,6 +404,13 @@ def is_job_url(url: str) -> bool:
     # board URL is the "View Opportunities" search link and must not become a row.
     if source_of(url) == "ultipro":
         return "/opportunitydetail" in path.lower() or "opportunityid" in (parsed.query or "").lower()
+    if source_of(url) == "apple":
+        return bool(re.search(r"/details/\d+", path))
+    if source_of(url) == "eightfold":
+        return bool(params.get("pid"))
+    # Eightfold-powered career sites (jobs.bms.com, etc.) keep pid= after /vsimp unwrap.
+    if params.get("pid") and re.search(r"/(careers|jobs?|opportunity)", path, re.I):
+        return True
     # An ATS id in the query is a posting no matter whose domain hosts the page.
     if any(p in params for p in ID_PARAMS):
         return True
@@ -477,6 +505,16 @@ def canonical_key(url: str) -> str:
         m = re.search(r"/([^/]+)/j/([^/]+)", path, re.I)
         if m:
             return f"workable:{m.group(1)}:{m.group(2)}"
+    if source == "apple":
+        m = re.search(r"/details/(\d+)", path)
+        if m:
+            return f"apple:{m.group(1)}"
+    if source == "eightfold":
+        pid = (params.get("pid") or [""])[0]
+        if pid:
+            return f"eightfold:{host}:{pid}"
+    if params.get("pid") and re.search(r"/(careers|jobs?|opportunity)", path, re.I):
+        return f"pid:{host}:{params['pid'][0]}"
     if source == "adzuna":
         m = re.search(r"/(\d{5,})", path)
         if m:

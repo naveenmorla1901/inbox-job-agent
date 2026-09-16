@@ -47,7 +47,7 @@ ALERT_SUBJECT = re.compile(
     # subjects the list above missed, so the LLM digest-recovery pass never ran.
     r"we.?ve matched|matched .{0,40}to your profile|"
     r"(role|roles|opportunit(?:y|ies)) .{0,40}(match|for you)|"
-    r"looks like a (match|great fit)|job feed|"
+    r"looks like a (match|great fit)|this (job|role) is a match|job feed|"
     r"job recommendations?|opportunit(?:y|ies) for you)",
     re.I,
 )
