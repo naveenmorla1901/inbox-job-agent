@@ -149,20 +149,23 @@ Sr. Machine Learning Research Engineer, Siri Speech
 Sr. Machine Learning Engineer, Speech LLM Evaluation
 """
 
-UKG_HTML = """
+# An unknown career host with non-numeric slug paths: real titles, but link shapes the
+# regex rules do not recognise, so the LLM recovery pass must fill them in. (Known ATS
+# trackers such as UKG/UltiPro are now handled directly by the rules; see test_extract.)
+CAREER_SITE_HTML = """
 <table>
-<tr><td><a href="https://email.ukgjobalerts.com/c/eJxEj7uO2zAQAL">Sr. Automation QA Engineer</a></td></tr>
-<tr><td><a href="https://email.ukgjobalerts.com/c/bBxEj7uO2zAQBL">AML Compliance Analyst</a></td></tr>
-<tr><td><a href="https://email.ukgjobalerts.com/c/cCxEj7uO2zAQCL">Senior Immigration Paralegal</a></td></tr>
-<tr><td><a href="https://email.ukgjobalerts.com/c/dDxEj7uO2zAQDL">Staff Data Engineer</a></td></tr>
-<tr><td><a href="https://email.ukgjobalerts.com/unsubscribe">Unsubscribe</a></td></tr>
+<tr><td><a href="https://careers.acme-labs.com/roles/alpha">Sr. Automation QA Engineer</a></td></tr>
+<tr><td><a href="https://careers.acme-labs.com/roles/bravo">AML Compliance Analyst</a></td></tr>
+<tr><td><a href="https://careers.acme-labs.com/roles/charlie">Senior Immigration Paralegal</a></td></tr>
+<tr><td><a href="https://careers.acme-labs.com/roles/delta">Staff Data Engineer</a></td></tr>
+<tr><td><a href="https://example.com/unsubscribe">Unsubscribe</a></td></tr>
 </table>
 """
 
 
 def test_career_site_link_shapes_still_trigger_the_recovery_pass(fresh_config):
-    """UKG/BAL alerts: real titles, but no link the regex rules recognise."""
-    email = _digest(UKG_HTML)
+    """Unknown career site: real titles, but no link the regex rules recognise."""
+    email = _digest(CAREER_SITE_HTML)
     from app.extract_jobs import extract_from_email
 
     rules = extract_from_email(email, limit=40)
@@ -185,7 +188,7 @@ def test_career_site_link_shapes_still_trigger_the_recovery_pass(fresh_config):
 
 
 def test_expected_count_is_passed_to_the_model(fresh_config):
-    email = _digest(UKG_HTML)
+    email = _digest(CAREER_SITE_HTML)
     llm = FakeLLM({"postings": [{"link": 0, "title": "Sr. Automation QA Engineer"}]})
     extract_postings(email, llm, limit=40)
     assert "about 4 job title(s)" in llm.prompts[0]
@@ -256,7 +259,7 @@ def test_roles_named_without_a_link_still_become_rows(fresh_config):
 
 
 def test_a_short_answer_triggers_one_top_up_call(fresh_config):
-    email = _digest(UKG_HTML)
+    email = _digest(CAREER_SITE_HTML)
     llm = FakeLLM(
         {"postings": [{"link": 0, "title": "Sr. Automation QA Engineer", "company": "BAL"}]},
         {"postings": [
